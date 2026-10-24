@@ -280,6 +280,13 @@ extension Settings {
                     )
                     .listRowBackground(Color.chart)
 
+                    Section(header: Text("Claude")) {
+                        NavigationLink(destination: ClaudeBridgeView()) {
+                            Label("Claude-Bridge (MCP)", systemImage: "sparkles")
+                        }
+                    }
+                    .listRowBackground(Color.chart)
+
                     Section(
                         header: Text("Support & Community"),
                         content: {
