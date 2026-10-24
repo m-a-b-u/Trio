@@ -79,6 +79,7 @@ jobs:
             -destination "platform=iOS Simulator,name=iPhone 17,OS=26.2" \
             -only-testing:TrioTests/ClaudeBridgeDiffTests \
             -only-testing:TrioTests/AIMealProviderTests \
+            -only-testing:TrioTests/AppleIntelligenceMealTests \
             -only-testing:TrioTests/ClaudeSettingsCatalogTests \
             -only-testing:TrioTests/AIAdditionalSettingsTests \
             -only-testing:TrioTests/AIBridgeSetupTests \
@@ -101,7 +102,7 @@ jobs:
           xcrun xcresulttool get test-results summary \
             --path "$RUNNER_TEMP/claude-bridge-tests.xcresult" \
             | tee "$RUNNER_TEMP/claude-bridge-tests.json"
-          minimum_tests=$(python3 -c 'from pathlib import Path; print(sum(Path("TrioTests/" + name + ".swift").read_text().count("@Test(") for name in ["ClaudeBridgeDiffTests", "AIMealProviderTests", "ClaudeSettingsCatalogTests", "AIAdditionalSettingsTests", "AIBridgeSetupTests"]))')
+          minimum_tests=$(python3 -c 'from pathlib import Path; print(sum(Path("TrioTests/" + name + ".swift").read_text().count("@Test(") for name in ["ClaudeBridgeDiffTests", "AIMealProviderTests", "AppleIntelligenceMealTests", "ClaudeSettingsCatalogTests", "AIAdditionalSettingsTests", "AIBridgeSetupTests"]))')
           jq -e --argjson minimum "$minimum_tests" '.totalTestCount >= $minimum and .passedTests == .totalTestCount and .failedTests == 0 and .skippedTests == 0' \
             "$RUNNER_TEMP/claude-bridge-tests.json"
 

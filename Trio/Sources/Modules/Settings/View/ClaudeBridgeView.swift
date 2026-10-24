@@ -300,7 +300,10 @@ func claudeSettingConstraints(target: String, key: String) -> [String: Any] {
     }
     if target == "preferences", key == "curve" { return ["enum": InsulinCurve.allCases.map(\.rawValue)] }
     if target == "app_preferences", key == "colorSchemePreference" { return ["enum": ColorSchemeOption.allCases.map(\.rawValue)] }
-    if ["ai_meal", "relay_config"].contains(target), key == "provider" {
+    if target == "ai_meal", key == "provider" {
+        return ["enum": AIMealProvider.allCases.map(\.rawValue)]
+    }
+    if target == "relay_config", key == "provider" {
         return ["enum": ["anthropic", "openai", "openai-compatible"]]
     }
     return [:]
@@ -370,12 +373,60 @@ private struct ClaudeAppPreferences: Codable {
     var isTrioRemoteControlEnabled: Bool
 }
 
-private struct ClaudeAIMealPreferences: Codable {
+struct ClaudeAIMealPreferences: Codable, Equatable {
     var provider: String
     var anthropicModel: String
     var openAIModel: String
     var openAICompatibleModel: String
     var customBaseURL: String
+}
+
+func claudeAIMealCatalogRows(_ preferences: ClaudeAIMealPreferences) throws -> [[String: Any]] {
+    // Keep inactive fields writable so one proposal can select and configure a cloud provider.
+    let cloudProviders = ["anthropicModel": "Anthropic", "openAIModel": "OpenAI",
+                          "openAICompatibleModel": "OpenAI-kompatibel", "customBaseURL": "OpenAI-kompatibel"]
+    return try claudeCatalogRows(target: "ai_meal", values: claudeDictionary(preferences)).map { row in
+        guard let key = row["key"] as? String, let provider = cloudProviders[key] else { return row }
+        var annotated = row
+        var constraints = row["constraints"] as? [String: Any] ?? [:]
+        constraints["note"] = "Gespeicherte Konfiguration für \(provider). Apple Intelligence verwendet dieses Feld nicht."
+        annotated["constraints"] = constraints
+        return annotated
+    }
+}
+
+func claudeValidateAIMealPreferences(
+    _ proposed: ClaudeAIMealPreferences,
+    current: ClaudeAIMealPreferences
+) throws -> AIMealProvider {
+    guard let provider = AIMealProvider(rawValue: proposed.provider) else { throw ClaudeBridgeError.notApplied("provider") }
+    for (new, old) in [(proposed.anthropicModel, current.anthropicModel),
+                       (proposed.openAIModel, current.openAIModel),
+                       (proposed.openAICompatibleModel, current.openAICompatibleModel),
+                       (proposed.customBaseURL, current.customBaseURL)] where new != old {
+        guard new == new.trimmingCharacters(in: .whitespacesAndNewlines) else {
+            throw ClaudeBridgeError.invalidSetting("Modell-IDs/URL ohne äußere Leerzeichen erforderlich")
+        }
+    }
+    if proposed.anthropicModel != current.anthropicModel, proposed.anthropicModel.isEmpty {
+        throw ClaudeBridgeError.invalidSetting("Anthropic-Modell darf nicht leer sein")
+    }
+    let selectedModel: String?
+    switch provider {
+    case .appleIntelligence: selectedModel = nil
+    case .anthropic: selectedModel = proposed.anthropicModel
+    case .openAI: selectedModel = proposed.openAIModel
+    case .openAICompatible: selectedModel = proposed.openAICompatibleModel
+    }
+    if let selectedModel {
+        guard !selectedModel.isEmpty, selectedModel == selectedModel.trimmingCharacters(in: .whitespacesAndNewlines) else {
+            throw ClaudeBridgeError.invalidSetting("Modell-ID erforderlich, ohne äußere Leerzeichen")
+        }
+    }
+    if provider == .openAICompatible || (proposed.customBaseURL != current.customBaseURL && !proposed.customBaseURL.isEmpty) {
+        _ = try AIMealConfiguration.normalizedBaseURL(proposed.customBaseURL)
+    }
+    return provider
 }
 
 private struct ClaudeBridgePreferences: Codable {
@@ -823,7 +874,8 @@ private func claudeFormat(_ value: Double) -> String {
         ))
         add("device_alerts", ClaudeDeviceAlertSettings(configs: DeviceAlertsStore.shared.configs))
         add("app_preferences", appPreferences())
-        add("ai_meal", mealPreferences())
+        let meal = mealPreferences()
+        if let mealRows = try? claudeAIMealCatalogRows(meal) { rows += mealRows }
         add("bridge_config", ClaudeBridgePreferences(enabled: ClaudeBridgeConfig.enabled, baseURL: ClaudeBridgeConfig.baseURL))
         let url = resolver?.resolve(Keychain.self)?.getValue(String.self, forKey: NightscoutConfig.Config.urlKey) ?? ""
         rows += claudeCatalogRows(target: "nightscout", values: ["url": url])
@@ -837,6 +889,7 @@ private func claudeFormat(_ value: Double) -> String {
             ("integrations", "tidepool", "Tidepool-Anmeldung benötigt den interaktiven OAuth-Dialog."),
             ("permissions", "health_calendar_notifications", "iOS-Berechtigungen werden ausschließlich im Systemdialog erteilt.")
         ] {
+            if target == "ai_meal", meal.provider == AIMealProvider.appleIntelligence.rawValue { continue }
             rows.append(["target": target, "key": key, "type": "string", "access": "action", "reason": reason,
                          "constraints": [:], "current": NSNull()])
         }
@@ -1198,25 +1251,16 @@ private func claudeFormat(_ value: Double) -> String {
                 }
             }
         case "ai_meal":
-            let (new, lines) = try patched(mealPreferences(), with: proposal.patch, target: proposal.target)
-            guard let provider = AIMealProvider(rawValue: new.provider) else { throw ClaudeBridgeError.notApplied("provider") }
-            let selectedModel = provider == .anthropic ? new.anthropicModel : provider == .openAI ? new.openAIModel : new.openAICompatibleModel
-            guard [new.anthropicModel, new.openAIModel, new.openAICompatibleModel, new.customBaseURL].allSatisfy({
-                $0 == $0.trimmingCharacters(in: .whitespacesAndNewlines)
-            }), !new.anthropicModel.isEmpty else {
-                throw ClaudeBridgeError.invalidSetting("Modell-IDs/URL ohne äußere Leerzeichen; Anthropic-Modell darf nicht leer sein")
-            }
-            guard !selectedModel.isEmpty else {
-                throw ClaudeBridgeError.invalidSetting("Modell-ID erforderlich")
-            }
-            if provider == .openAICompatible || !new.customBaseURL.isEmpty {
-                _ = try AIMealConfiguration.normalizedBaseURL(new.customBaseURL)
-            }
+            let old = mealPreferences()
+            let (new, lines) = try patched(old, with: proposal.patch, target: proposal.target)
+            let provider = try claudeValidateAIMealPreferences(new, current: old)
             return ClaudePreparedChange(proposal: proposal, title: "KI-Mahlzeitenanbieter", lines: lines) {
-                AIMealSettingsStore.customBaseURL = new.customBaseURL
-                AIMealSettingsStore.setModel(new.anthropicModel, for: .anthropic)
-                AIMealSettingsStore.setModel(new.openAIModel, for: .openAI)
-                AIMealSettingsStore.setModel(new.openAICompatibleModel, for: .openAICompatible)
+                if new.customBaseURL != old.customBaseURL { AIMealSettingsStore.customBaseURL = new.customBaseURL }
+                if new.anthropicModel != old.anthropicModel { AIMealSettingsStore.setModel(new.anthropicModel, for: .anthropic) }
+                if new.openAIModel != old.openAIModel { AIMealSettingsStore.setModel(new.openAIModel, for: .openAI) }
+                if new.openAICompatibleModel != old.openAICompatibleModel {
+                    AIMealSettingsStore.setModel(new.openAICompatibleModel, for: .openAICompatible)
+                }
                 AIMealSettingsStore.provider = provider
             }
         case "bridge_config":

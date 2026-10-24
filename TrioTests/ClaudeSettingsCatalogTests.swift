@@ -61,6 +61,76 @@ import Testing
         #expect(throws: (any Error).self) { try claudeValidateEndpoint("http://localhost:8080", allowLocalHTTP: false) }
     }
 
+    @Test("Apple Intelligence is an iPhone meal provider, not a Mac relay provider") func appleProviderCatalog() throws {
+        let mealProviders = try #require(claudeSettingConstraints(target: "ai_meal", key: "provider")["enum"] as? [String])
+        #expect(mealProviders.contains("apple-intelligence"))
+        let relayProviders = try #require(claudeSettingConstraints(target: "relay_config", key: "provider")["enum"] as? [String])
+        #expect(!relayProviders.contains("apple-intelligence"))
+        try claudeValidateSettingPatch(["provider": .string("apple-intelligence")], current: ["provider": "anthropic"], target: "ai_meal")
+        #expect(throws: (any Error).self) {
+            try claudeValidateSettingPatch(["provider": .string("apple-intelligence")], current: ["provider": "anthropic"], target: "relay_config")
+        }
+    }
+
+    @Test("Apple meal catalog keeps saved cloud configuration writable and explicitly inactive for Apple") func appleCatalogCloudFields() throws {
+        let cloud = ClaudeAIMealPreferences(provider: "openai-compatible", anthropicModel: "synthetic-claude",
+                                           openAIModel: "synthetic-gpt", openAICompatibleModel: "synthetic-custom",
+                                           customBaseURL: "https://synthetic.example/v1")
+        var local = cloud
+        local.provider = "apple-intelligence"
+        #expect(try claudeValidateAIMealPreferences(local, current: cloud) == .appleIntelligence)
+        let rows = try claudeAIMealCatalogRows(local)
+        #expect(Set(rows.compactMap { $0["key"] as? String }) == ["provider", "anthropicModel", "openAIModel", "openAICompatibleModel", "customBaseURL"])
+        #expect(rows.first { $0["key"] as? String == "provider" }?["current"] as? String == "apple-intelligence")
+        for row in rows where row["key"] as? String != "provider" {
+            #expect(row["access"] as? String == "proposal")
+            #expect((row["constraints"] as? [String: Any])?["note"] as? String != nil)
+        }
+        #expect(try claudeAIMealCatalogRows(cloud).count == 5)
+        var restored = local
+        restored.provider = cloud.provider
+        #expect(restored == cloud)
+        #expect(try claudeValidateAIMealPreferences(restored, current: local) == .openAICompatible)
+    }
+
+    @Test("An Apple-to-cloud proposal can set provider, model and endpoint atomically") func appleAtomicCloudSwitch() throws {
+        let local = ClaudeAIMealPreferences(provider: "apple-intelligence", anthropicModel: "", openAIModel: "",
+                                           openAICompatibleModel: "", customBaseURL: "")
+        let rows = try claudeAIMealCatalogRows(local)
+        let current = Dictionary(uniqueKeysWithValues: rows.map { ($0["key"] as! String, $0["current"]!) })
+        for patch: [String: ClaudeJSONValue] in [
+            ["provider": .string("openai"), "openAIModel": .string("synthetic-gpt")],
+            ["provider": .string("openai-compatible"), "openAICompatibleModel": .string("synthetic-custom"),
+             "customBaseURL": .string("https://synthetic.example/v1")]
+        ] {
+            try claudeValidateSettingPatch(patch, current: current, target: "ai_meal")
+            let merged = current.merging(patch.mapValues(\.anyValue)) { _, new in new }
+            let proposed = try JSONDecoder().decode(ClaudeAIMealPreferences.self, from: JSONSerialization.data(withJSONObject: merged))
+            #expect(try claudeValidateAIMealPreferences(proposed, current: local).rawValue == patch["provider"]?.stringValue)
+            #expect(proposed.anthropicModel == local.anthropicModel)
+        }
+    }
+
+    @Test("Apple selection does not require a cloud model or endpoint and preserves unselected legacy values")
+    func appleConfigurationValidation() throws {
+        let empty = ClaudeAIMealPreferences(provider: "anthropic", anthropicModel: "", openAIModel: "",
+                                           openAICompatibleModel: "", customBaseURL: "")
+        var local = empty
+        local.provider = "apple-intelligence"
+        #expect(try claudeValidateAIMealPreferences(local, current: empty) == .appleIntelligence)
+        var legacy = local
+        legacy.customBaseURL = "legacy value not used by Apple"
+        #expect(try claudeValidateAIMealPreferences(legacy, current: legacy) == .appleIntelligence)
+        var invalidEdit = legacy
+        invalidEdit.customBaseURL = "https://user:secret@synthetic.example/v1"
+        #expect(throws: (any Error).self) { try claudeValidateAIMealPreferences(invalidEdit, current: legacy) }
+        for cloudProvider in ["anthropic", "openai", "openai-compatible"] {
+            var cloud = local
+            cloud.provider = cloudProvider
+            #expect(throws: (any Error).self) { try claudeValidateAIMealPreferences(cloud, current: local) }
+        }
+    }
+
     @Test("Schedule parsing rejects malformed and out-of-day times") func scheduleTimes() throws {
         for entry: [String: ClaudeJSONValue] in [
             ["time": .string("00:00:30")], ["time": .string("00:00:00:00")],

@@ -6,7 +6,7 @@ import UIKit
 
 // MARK: - Result model
 
-/// Nutrition estimate returned by the selected AI provider for a meal photo.
+/// Nutrition estimate returned by the selected AI provider for a meal photo or description.
 /// The values are ONLY used to pre-fill the carb entry form. Nothing is logged
 /// or dosed until the user reviews the values and confirms in Trio as usual.
 struct AIMealEstimate: Decodable, Equatable {
@@ -39,6 +39,7 @@ enum AIMealProvider: String, CaseIterable, Identifiable {
     case anthropic
     case openAI = "openai"
     case openAICompatible = "openai-compatible"
+    case appleIntelligence = "apple-intelligence"
 
     var id: String { rawValue }
     var displayName: String {
@@ -46,6 +47,7 @@ enum AIMealProvider: String, CaseIterable, Identifiable {
         case .anthropic: return "Anthropic (Claude)"
         case .openAI: return "OpenAI"
         case .openAICompatible: return "OpenAI-kompatibel"
+        case .appleIntelligence: return "Apple Intelligence (offline)"
         }
     }
 }
@@ -57,6 +59,7 @@ struct AIMealConfiguration: Equatable {
 
     func endpoint() throws -> URL {
         switch provider {
+        case .appleIntelligence: throw AIMealError.onDeviceProvider
         case .anthropic: return URL(string: "https://api.anthropic.com/v1/messages")!
         case .openAI: return URL(string: "https://api.openai.com/v1/responses")!
         case .openAICompatible:
@@ -106,22 +109,25 @@ enum AIMealSettingsStore {
     }
 
     static func model(for provider: AIMealProvider, defaults: UserDefaults = .standard) -> String {
+        guard provider != .appleIntelligence else { return "" }
         let value = defaults.string(forKey: modelDefaultsKey(for: provider))?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
         return value.isEmpty && provider == .anthropic ? legacyDefaultModel : value
     }
 
     static func setModel(_ value: String, for provider: AIMealProvider) {
+        guard provider != .appleIntelligence else { return }
         UserDefaults.standard.set(value.trimmingCharacters(in: .whitespacesAndNewlines), forKey: modelDefaultsKey(for: provider))
     }
 
     static var currentConfiguration: AIMealConfiguration {
         let selected = provider
-        return AIMealConfiguration(provider: selected, model: model(for: selected), baseURL: customBaseURL)
+        return AIMealConfiguration(provider: selected, model: model(for: selected), baseURL: selected == .appleIntelligence ? "" : customBaseURL)
     }
 
     /// Anthropic keeps its original identity; compatible credentials belong to one complete endpoint.
     static func credentialIdentity(for provider: AIMealProvider, baseURL: String = "") throws -> (service: String, account: String) {
         switch provider {
+        case .appleIntelligence: throw AIMealError.onDeviceProvider
         case .anthropic: return ("org.nightscout.trio.claude", "anthropic_api_key")
         case .openAI: return ("org.nightscout.trio.ai.meal", "openai_api_key")
         case .openAICompatible:
@@ -184,6 +190,7 @@ enum ClaudeSettingsStore {
 // MARK: - Provider API client
 
 enum AIMealError: LocalizedError {
+    case onDeviceProvider
     case missingAPIKey
     case missingModel
     case invalidURL
@@ -196,6 +203,7 @@ enum AIMealError: LocalizedError {
 
     var errorDescription: String? {
         switch self {
+        case .onDeviceProvider: return "Apple Intelligence arbeitet lokal und verwendet keine HTTP-Schnittstelle oder API-Keys."
         case .missingAPIKey: return "Für diesen Anbieter und Endpunkt ist kein API-Key hinterlegt."
         case .missingModel: return "Bitte eine Modell-ID mit Bildverständnis eintragen."
         case .invalidURL: return "Bitte eine gültige HTTPS-Basis-URL ohne Zugangsdaten, Query oder Fragment eintragen. HTTP ist nur für localhost erlaubt."
@@ -241,6 +249,7 @@ enum AIMealService {
         let image = jpeg.base64EncodedString()
         var body: [String: Any]
         switch configuration.provider {
+        case .appleIntelligence: throw AIMealError.onDeviceProvider
         case .anthropic:
             body = [
                 "model": model, "max_tokens": 1024, "system": systemPrompt,
@@ -284,6 +293,7 @@ enum AIMealService {
     }
 
     static func parseResponse(_ data: Data, status: Int, provider: AIMealProvider) throws -> AIMealEstimate {
+        guard provider != .appleIntelligence else { throw AIMealError.onDeviceProvider }
         let object = (try? JSONSerialization.jsonObject(with: data)) as? [String: Any]
         guard (200 ..< 300).contains(status) else {
             throw AIMealError.http(status)
@@ -291,6 +301,7 @@ enum AIMealService {
         guard let object else { throw AIMealError.unparsable }
         let answer: String
         switch provider {
+        case .appleIntelligence: throw AIMealError.onDeviceProvider
         case .anthropic:
             if object["stop_reason"] as? String == "max_tokens" { throw AIMealError.incompleteResponse }
             let blocks = object["content"] as? [[String: Any]] ?? []
@@ -316,6 +327,10 @@ enum AIMealService {
               let json = String(answer[start ... end]).data(using: .utf8),
               let estimate = try? JSONDecoder().decode(AIMealEstimate.self, from: json)
         else { throw AIMealError.unparsable }
+        return try validated(estimate)
+    }
+
+    static func validated(_ estimate: AIMealEstimate) throws -> AIMealEstimate {
         func valid(_ value: Double, limit: Double = 1000) -> Bool { value.isFinite && value >= 0 && value < limit }
         guard [estimate.carbs, estimate.fat, estimate.protein].allSatisfy({ valid($0) }),
               estimate.items.allSatisfy({ item in
@@ -327,8 +342,14 @@ enum AIMealService {
         return estimate
     }
 
-    static func estimate(image: UIImage, userHint: String) async throws -> AIMealEstimate {
-        let configuration = AIMealSettingsStore.currentConfiguration
+    static func estimate(
+        image: UIImage?, userHint: String,
+        configuration: AIMealConfiguration = AIMealSettingsStore.currentConfiguration
+    ) async throws -> AIMealEstimate {
+        if configuration.provider == .appleIntelligence {
+            return try await AppleIntelligenceMealService.estimate(description: userHint)
+        }
+        guard let image else { throw AIMealError.imageEncoding }
         guard let jpeg = downscaled(image, maxDimension: 1280).jpegData(compressionQuality: 0.8)
         else { throw AIMealError.imageEncoding }
         let request = try makeRequest(
@@ -372,6 +393,7 @@ private final class AIMealRedirectDelegate: NSObject, URLSessionTaskDelegate {
 // MARK: - Reusable meal-provider settings
 
 struct AIMealSettingsView: View {
+    @Environment(\.scenePhase) private var scenePhase
     @State private var provider = AIMealSettingsStore.provider
     @State private var modelInput = AIMealSettingsStore.model(for: AIMealSettingsStore.provider)
     @State private var baseURLInput = AIMealSettingsStore.customBaseURL
@@ -379,6 +401,7 @@ struct AIMealSettingsView: View {
     @State private var hasKey = false
     @State private var message: String?
     @State private var saveFailed = false
+    @State private var appleAvailability = AppleIntelligenceMealService.availability
 
     var body: some View {
         Form {
@@ -393,6 +416,7 @@ struct AIMealSettingsView: View {
                     apiKeyInput = ""
                     message = nil
                     refreshKeyStatus()
+                    appleAvailability = AppleIntelligenceMealService.availability
                 }
                 if provider == .openAICompatible {
                     TextField("Basis-URL, z.B. https://anbieter.example/v1", text: $baseURLInput)
@@ -405,16 +429,23 @@ struct AIMealSettingsView: View {
                             refreshKeyStatus()
                         }
                 }
-                TextField("Modell-ID mit Bildverständnis", text: $modelInput)
-                    .textInputAutocapitalization(.never)
-                    .autocorrectionDisabled()
-                SecureField(
-                    hasKey ? "API-Key gespeichert – neu eingeben zum Ändern"
-                        : (provider == .openAICompatible ? "API-Key (optional)" : "API-Key"),
-                    text: $apiKeyInput
-                )
-                    .textInputAutocapitalization(.never)
-                    .autocorrectionDisabled()
+                if provider == .appleIntelligence {
+                    Label(appleAvailability.message, systemImage: appleAvailability.available ? "checkmark.circle" : "info.circle")
+                        .foregroundColor(appleAvailability.available ? .secondary : .orange)
+                    Text("Mahlzeit und Menge als Text beschreiben. Fotos werden mit dieser lokalen Integration nicht ausgewertet.")
+                        .font(.footnote)
+                } else {
+                    TextField("Modell-ID mit Bildverständnis", text: $modelInput)
+                        .textInputAutocapitalization(.never)
+                        .autocorrectionDisabled()
+                    SecureField(
+                        hasKey ? "API-Key gespeichert – neu eingeben zum Ändern"
+                            : (provider == .openAICompatible ? "API-Key (optional)" : "API-Key"),
+                        text: $apiKeyInput
+                    )
+                        .textInputAutocapitalization(.never)
+                        .autocorrectionDisabled()
+                }
                 Button("Speichern") { save() }
                 if hasKey {
                     Button("API-Key für diesen Anbieter löschen", role: .destructive) {
@@ -435,12 +466,20 @@ struct AIMealSettingsView: View {
             } header: {
                 Text("KI-Mahlzeiten")
             } footer: {
-                Text("Der API-Key bleibt im Schlüsselbund dieses iPhones. Beim Schätzen werden Foto und Hinweis an den gewählten Anbieter gesendet. Für OpenAI-kompatible Dienste muss das Modell Bilder unterstützen; der Key ist an die eingetragene Basis-URL gebunden.")
+                Text(provider == .appleIntelligence
+                    ? "Die Beschreibung wird auf diesem iPhone verarbeitet. Kein API-Key, kein Mac und keine Cloud-Anfrage. Apple Intelligence muss aktiviert und das Systemmodell bereits geladen sein. Bei Nichtverfügbarkeit wird kein anderer Anbieter verwendet."
+                    : "Der API-Key bleibt im Schlüsselbund dieses iPhones. Beim Schätzen werden Foto und Hinweis an den gewählten Anbieter gesendet. Für OpenAI-kompatible Dienste muss das Modell Bilder unterstützen; der Key ist an die eingetragene Basis-URL gebunden.")
             }
         }
         .navigationTitle("KI-Mahlzeiten")
         .navigationBarTitleDisplayMode(.inline)
-        .onAppear { refreshKeyStatus() }
+        .onAppear {
+            refreshKeyStatus()
+            appleAvailability = AppleIntelligenceMealService.availability
+        }
+        .onChange(of: scenePhase) { _, phase in
+            if phase == .active { appleAvailability = AppleIntelligenceMealService.availability }
+        }
     }
 
     private func refreshKeyStatus() {
@@ -449,6 +488,15 @@ struct AIMealSettingsView: View {
 
     private func save() {
         do {
+            if provider == .appleIntelligence {
+                AIMealSettingsStore.provider = provider
+                apiKeyInput = ""
+                refreshKeyStatus()
+                appleAvailability = AppleIntelligenceMealService.availability
+                message = "Gespeichert."
+                saveFailed = false
+                return
+            }
             let model = modelInput.trimmingCharacters(in: .whitespacesAndNewlines)
             guard !model.isEmpty else { throw AIMealError.missingModel }
             let configuration = AIMealConfiguration(provider: provider, model: model, baseURL: baseURLInput)
@@ -510,18 +558,22 @@ struct CameraPicker: UIViewControllerRepresentable {
 
 // MARK: - Sheet
 
-/// Photo -> selected AI provider -> editable estimate -> "Übernehmen" pre-fills Trio's carb form.
+/// Photo or local text -> editable estimate -> "Übernehmen" pre-fills Trio's carb form.
 struct AIMealEstimateView: View {
     /// Called with (carbs, fat, protein, note) when the user taps "Übernehmen".
     let onApply: (Decimal, Decimal, Decimal, String) -> Void
 
     @Environment(\.dismiss) private var dismiss
+    @Environment(\.scenePhase) private var scenePhase
 
     @State private var image: UIImage?
     @State private var photoItem: PhotosPickerItem?
+    @State private var isLoadingPhoto = false
+    @State private var photoLoadTask: Task<Void, Never>?
     @State private var showCamera = false
     @State private var hint = ""
     @State private var isLoading = false
+    @State private var analysisTask: Task<Void, Never>?
     @State private var errorText: String?
     @State private var estimate: AIMealEstimate?
 
@@ -535,10 +587,18 @@ struct AIMealEstimateView: View {
         for: AIMealSettingsStore.provider, baseURL: AIMealSettingsStore.customBaseURL
     ) != nil
     @State private var showSettings = false
+    @State private var appleAvailability = AppleIntelligenceMealService.availability
+
+    private var usesAppleIntelligence: Bool { configuration.provider == .appleIntelligence }
 
     private var isConfigured: Bool {
-        (hasKey || configuration.provider == .openAICompatible)
+        if usesAppleIntelligence { return appleAvailability.available }
+        return (hasKey || configuration.provider == .openAICompatible)
             && !configuration.model.isEmpty && (try? configuration.endpoint()) != nil
+    }
+
+    private var hasInput: Bool {
+        usesAppleIntelligence ? !hint.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty : image != nil
     }
 
     var body: some View {
@@ -546,41 +606,57 @@ struct AIMealEstimateView: View {
             Form {
                 Section {
                     LabeledContent("Anbieter", value: configuration.provider.displayName)
+                    if usesAppleIntelligence {
+                        Text(appleAvailability.message).font(.footnote)
+                            .foregroundColor(appleAvailability.available ? .secondary : .orange)
+                    }
                     if !isConfigured {
                         Button("KI-Anbieter einrichten") { showSettings = true }
                     }
                 }
 
                 Section {
-                    if let image {
+                    if !usesAppleIntelligence, let image {
                         Image(uiImage: image)
                             .resizable()
                             .scaledToFit()
                             .frame(maxHeight: 220)
                             .clipShape(RoundedRectangle(cornerRadius: 10))
                     }
-                    HStack {
-                        Button { showCamera = true } label: {
-                            Label("Foto aufnehmen", systemImage: "camera")
-                        }.buttonStyle(.borderless)
-                        Spacer()
-                        PhotosPicker(selection: $photoItem, matching: .images) {
-                            Label("Mediathek", systemImage: "photo")
-                        }.buttonStyle(.borderless)
+                    if !usesAppleIntelligence {
+                        HStack {
+                            Button { showCamera = true } label: {
+                                Label("Foto aufnehmen", systemImage: "camera")
+                            }.buttonStyle(.borderless)
+                            Spacer()
+                            PhotosPicker(selection: $photoItem, matching: .images) {
+                                Label("Mediathek", systemImage: "photo")
+                            }.buttonStyle(.borderless)
+                        }
                     }
-                    TextField("Hinweis (optional, z.B. „ca. 300 g Nudeln“)", text: $hint, axis: .vertical)
-                } header: { Text("Mahlzeit") }
+                    TextField(usesAppleIntelligence
+                        ? "Mahlzeit und Menge, z.B. 150 g gekochte Nudeln mit 50 g Tomatensauce"
+                        : "Hinweis (optional, z.B. „ca. 300 g Nudeln“)", text: $hint, axis: .vertical)
+                    if usesAppleIntelligence {
+                        Text("\(hint.count)/2000 Zeichen").font(.caption).foregroundStyle(.secondary)
+                    }
+                } header: { Text("Mahlzeit") } footer: {
+                    if usesAppleIntelligence {
+                        Text("Offline auf diesem iPhone. Beschreibe Lebensmittel, Zubereitung und verzehrte Menge. Fotos werden nicht analysiert. Die Schätzung wird anschließend zur Prüfung angezeigt.")
+                    }
+                }
+                .disabled(isLoading || isLoadingPhoto)
 
                 Section {
                     Button {
-                        Task { await analyze() }
+                        analysisTask = Task { await analyze() }
                     } label: {
                         HStack {
-                            if isLoading { ProgressView().padding(.trailing, 6) }
-                            Text(isLoading ? "KI analysiert …" : "Mit KI schätzen")
+                            if isLoading || isLoadingPhoto { ProgressView().padding(.trailing, 6) }
+                            Text(isLoadingPhoto ? "Foto wird geladen …" : (isLoading ? "KI analysiert …" : "Mit KI schätzen"))
                         }
                     }
-                    .disabled(image == nil || isLoading || !isConfigured)
+                    .disabled(!hasInput || isLoading || isLoadingPhoto || !isConfigured || (usesAppleIntelligence && hint.count > 2000))
                     if let errorText {
                         Text(errorText).font(.footnote).foregroundStyle(.red)
                     }
@@ -605,8 +681,18 @@ struct AIMealEstimateView: View {
                 CameraPicker(image: $image).ignoresSafeArea()
             }
             .sheet(isPresented: $showSettings, onDismiss: {
-                configuration = AIMealSettingsStore.currentConfiguration
+                let selected = AIMealSettingsStore.currentConfiguration
+                if selected != configuration {
+                    photoLoadTask?.cancel()
+                    isLoadingPhoto = false
+                    estimate = nil
+                    errorText = nil
+                    image = nil
+                    photoItem = nil
+                }
+                configuration = selected
                 hasKey = AIMealSettingsStore.apiKey(for: configuration.provider, baseURL: configuration.baseURL) != nil
+                appleAvailability = AppleIntelligenceMealService.availability
             }) {
                 NavigationStack {
                     AIMealSettingsView()
@@ -618,18 +704,38 @@ struct AIMealEstimateView: View {
                 }
             }
             .onChange(of: photoItem) { _, item in
+                photoLoadTask?.cancel()
+                image = nil
+                estimate = nil
+                errorText = nil
+                isLoadingPhoto = item != nil
                 guard let item else { return }
-                Task {
-                    if let data = try? await item.loadTransferable(type: Data.self),
-                       let picked = UIImage(data: data)
-                    {
-                        await MainActor.run { image = picked }
-                    }
+                photoLoadTask = Task { @MainActor in
+                    let data = try? await item.loadTransferable(type: Data.self)
+                    guard !Task.isCancelled, photoItem == item, !usesAppleIntelligence else { return }
+                    image = data.flatMap { UIImage(data: $0) }
+                    isLoadingPhoto = false
+                    if image == nil { errorText = "Das ausgewählte Foto konnte nicht geladen werden." }
                 }
             }
             .onChange(of: image) { _, _ in
                 estimate = nil
                 errorText = nil
+            }
+            .onChange(of: hint) { _, _ in
+                estimate = nil
+                errorText = nil
+            }
+            .onChange(of: scenePhase) { _, phase in
+                if phase == .active { appleAvailability = AppleIntelligenceMealService.availability }
+            }
+            .onDisappear {
+                analysisTask?.cancel()
+                photoLoadTask?.cancel()
+                if isLoadingPhoto {
+                    isLoadingPhoto = false
+                    photoItem = nil
+                }
             }
         }
     }
@@ -692,17 +798,25 @@ struct AIMealEstimateView: View {
     }
 
     @MainActor private func analyze() async {
-        guard let image else { return }
+        guard hasInput, !isLoadingPhoto else { return }
+        let requestedConfiguration = configuration
+        let requestedImage = image
+        let requestedHint = hint
         isLoading = true
         errorText = nil
+        estimate = nil
         defer { isLoading = false }
         do {
-            let result = try await AIMealService.estimate(image: image, userHint: hint)
+            let result = try await AIMealService.estimate(image: requestedImage, userHint: requestedHint, configuration: requestedConfiguration)
+            try Task.checkCancellation()
+            guard configuration == requestedConfiguration, image == requestedImage, hint == requestedHint else { return }
             estimate = result
             carbs = result.carbs.rounded()
             fat = result.fat.rounded()
             protein = result.protein.rounded()
             note = result.shortNote ?? "🤖 KI"
+        } catch is CancellationError {
+            // Dismissing the sheet must not publish a late result.
         } catch {
             errorText = error.localizedDescription
         }

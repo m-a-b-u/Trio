@@ -15,7 +15,7 @@ import Testing
         do { try operation(); return false } catch { return true }
     }
 
-    @Test("Each provider receives its own endpoint, auth and image schema", arguments: AIMealProvider.allCases)
+    @Test("Each remote provider receives its own endpoint, auth and image schema", arguments: AIMealProvider.allCases.filter { $0 != .appleIntelligence })
     func requestFormat(_ provider: AIMealProvider) throws {
         let request = try AIMealService.makeRequest(
             configuration: configuration(provider), apiKey: "synthetic-key", jpeg: Data([1, 2, 3]), userHint: "Testportion"
@@ -26,6 +26,7 @@ import Testing
         #expect(request.httpMethod == "POST")
         #expect(body["model"] as? String == "test-vision-model")
         switch provider {
+        case .appleIntelligence: Issue.record("Local provider must never create an HTTP request")
         case .anthropic:
             #expect(request.url?.absoluteString == "https://api.anthropic.com/v1/messages")
             #expect(request.value(forHTTPHeaderField: "x-api-key") == "synthetic-key")
@@ -53,10 +54,13 @@ import Testing
         }
     }
 
-    @Test("Each provider response yields the same editable estimate", arguments: AIMealProvider.allCases)
+    @Test("Each remote provider response yields the same editable estimate", arguments: AIMealProvider.allCases.filter { $0 != .appleIntelligence })
     func responseFormat(_ provider: AIMealProvider) throws {
         let response: [String: Any]
         switch provider {
+        case .appleIntelligence:
+            Issue.record("Local provider must never parse an HTTP response")
+            return
         case .anthropic:
             response = ["content": [["type": "text", "text": estimateJSON]], "stop_reason": "end_turn"]
         case .openAI:
@@ -75,7 +79,7 @@ import Testing
         #expect(estimate.items.first?.grams == 100)
     }
 
-    @Test("HTTP errors and empty responses fail for every provider", arguments: AIMealProvider.allCases)
+    @Test("HTTP errors and empty responses fail for every remote provider", arguments: AIMealProvider.allCases.filter { $0 != .appleIntelligence })
     func providerErrors(_ provider: AIMealProvider) {
         let data = Data("{\"error\":{\"message\":\"Synthetic failure\"}}".utf8)
         do {
@@ -93,6 +97,54 @@ import Testing
         #expect(request.url?.absoluteString == "http://localhost:8080/v1/chat/completions")
         #expect(request.value(forHTTPHeaderField: "Authorization") == nil)
         #expect(request.value(forHTTPHeaderField: "x-api-key") == nil)
+    }
+
+    @Test("Apple Intelligence cannot create network requests or access provider credentials") func appleIsLocalOnly() {
+        let local = configuration(.appleIntelligence)
+        #expect(fails { _ = try local.endpoint() })
+        #expect(fails { _ = try AIMealService.makeRequest(configuration: local, apiKey: "synthetic-key", jpeg: Data([1]), userHint: "100 g Test") })
+        #expect(fails { _ = try AIMealService.parseResponse(Data(estimateJSON.utf8), status: 200, provider: .appleIntelligence) })
+        #expect(fails { _ = try AIMealSettingsStore.credentialIdentity(for: .appleIntelligence) })
+        #expect(AIMealSettingsStore.apiKey(for: .appleIntelligence) == nil)
+        #expect(!AIMealSettingsStore.setAPIKey("synthetic-key", for: .appleIntelligence))
+    }
+
+    @Test("Apple selection needs no model and preserves saved remote configuration") func appleSelection() throws {
+        let suite = "AIMealProviderTests.\(UUID().uuidString)"
+        let defaults = try #require(UserDefaults(suiteName: suite))
+        defer { defaults.removePersistentDomain(forName: suite) }
+        defaults.set("apple-intelligence", forKey: "ai.meal.provider")
+        defaults.set("saved-remote-model", forKey: "ai.meal.openai.model")
+        defaults.set("ignored-for-local", forKey: "ai.meal.apple-intelligence.model")
+        #expect(AIMealSettingsStore.provider(defaults: defaults) == .appleIntelligence)
+        #expect(AIMealSettingsStore.model(for: .appleIntelligence, defaults: defaults).isEmpty)
+        #expect(AIMealSettingsStore.model(for: .openAI, defaults: defaults) == "saved-remote-model")
+    }
+
+    @Test("Apple dispatch validates local text before any image, endpoint or key requirements") func appleDispatch() async {
+        let local = AIMealConfiguration(provider: .appleIntelligence, model: "", baseURL: "not-a-cloud-endpoint")
+        do {
+            _ = try await AIMealService.estimate(image: nil, userHint: " \n ", configuration: local)
+            Issue.record("Empty local input must be rejected")
+        } catch {
+            #expect(error as? AppleIntelligenceMealError == .emptyDescription)
+        }
+    }
+
+    @Test("Cancelled Apple dispatch never starts a model or network request") func appleCancellation() async {
+        let operation = Task {
+            withUnsafeCurrentTask { $0?.cancel() }
+            return try await AIMealService.estimate(
+                image: nil, userHint: "150 g gekochter Reis",
+                configuration: AIMealConfiguration(provider: .appleIntelligence, model: "", baseURL: "invalid")
+            )
+        }
+        do {
+            _ = try await operation.value
+            Issue.record("Cancelled estimation must not produce a result")
+        } catch {
+            #expect(error is CancellationError)
+        }
     }
 
     @Test("Partial output is not accepted as a completed estimate") func incompleteResponse() throws {

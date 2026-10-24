@@ -14,7 +14,8 @@ mit Vorher/Nachher-Diff angezeigt und erst nach lokaler Authentifizierung (Face 
 
 **Kein Inferenz-API-Key nötig:** Lesen, Statistiken und manuelle Vorschläge funktionieren über den
 MCP-Client ohne Anthropic- oder OpenAI-Modellschlüssel im Relay. Die unten beschriebenen Tagesanalysen
-und Mahlzeitfotos sind zusätzliche API-Funktionen mit eigener Anbieter-Konfiguration.
+und die Mahlzeiten-KI sind zusätzliche Funktionen: Cloud-Anbieter nutzen eigene API-Konfigurationen;
+Apple Intelligence verarbeitet Mahlzeitentext lokal auf dem iPhone.
 
 ## Einrichtung am Mac
 
@@ -144,7 +145,9 @@ Referenzen: [Claude-Authentifizierung](https://claude.com/docs/connectors/buildi
 
 ## Optionale API-Funktionen: Tagesanalyse
 
-Anbieter und Zugangsdaten am Mac sind unabhängig von der Konfiguration für Mahlzeitfotos am iPhone.
+Anbieter und Zugangsdaten am Mac sind unabhängig von der Mahlzeiten-KI am iPhone. Die Tagesanalyse
+(`relay_config`) unterstützt weiterhin ausschließlich Anthropic, OpenAI und OpenAI-kompatible APIs;
+Apple Intelligence ist nur als Mahlzeitenanbieter auf dem iPhone verfügbar.
 Bestehende Anthropic-Schlüssel und Modellwerte bleiben beim Upgrade erhalten. Ein Anbieterwechsel
 übernimmt keine fremden Schlüssel oder Modellnamen. Es gibt keinen automatischen Anbieter-Fallback.
 
@@ -185,16 +188,26 @@ Der bisherige Anthropic-Standard `claude-sonnet-4-5` bleibt für bestehende Konf
 Anthropic kündigt seine Abschaltung für den 30. November 2026 an. Ein verfügbares Modell explizit
 konfigurieren ([Anthropic-Abkündigungen](https://platform.claude.com/docs/en/about-claude/model-deprecations)).
 
-## Optionale API-Funktionen: Mahlzeitfotos
+## Optionale Mahlzeiten-KI auf dem iPhone
 
-In Trio: **Einstellungen → KI → KI-Anbieter für Mahlzeitfotos**. Anbieter, Modell-ID, gegebenenfalls
-Basis-URL und API-Key speichern. Schlüssel liegen im iPhone-Schlüsselbund, getrennt nach Anbieter und
-bei eigenen APIs nach Endpunkt. Das Modell muss Bilder verstehen. Ein Endpunkt ohne Authentifizierung
-kann bei „OpenAI-kompatibel“ ohne Schlüssel verwendet werden.
+In Trio: **Einstellungen → KI → KI-Anbieter für Mahlzeiten**.
 
-Im Behandlungsdialog **Mahlzeit per Foto schätzen (KI)** wählen. Nur das ausgewählte Foto und der
-optionale Hinweis werden an diesen Anbieter gesendet. Die zurückgegebenen Nährwerte bleiben editierbar
-und füllen erst nach Übernahme das normale Trio-Formular vor; dadurch wird nichts automatisch dosiert.
+**Apple Intelligence (offline):** Benötigt iOS 26 oder neuer, ein geeignetes Gerät, aktivierte
+Apple Intelligence und bereits geladene Systemmodelle. Im Behandlungsdialog **Mahlzeit mit KI schätzen**
+wählen und die Mahlzeit als Text mit Mengen beschreiben, z. B. „150 g Naturjoghurt und 30 g Haferflocken“.
+Dieser Anbieter verarbeitet ausschließlich Text, keine Fotos. Er benötigt weder Modell-ID noch API-Key,
+Mac oder Cloud-Verbindung. Ist das lokale Modell nicht verfügbar, zeigt Trio den Grund an und wechselt
+nicht automatisch zu einem Cloud-Anbieter.
+
+**Anthropic, OpenAI und OpenAI-kompatibel:** Modell-ID, gegebenenfalls Basis-URL und API-Key speichern.
+Schlüssel liegen im iPhone-Schlüsselbund, getrennt nach Anbieter und bei eigenen APIs nach Endpunkt.
+Das Modell muss Bilder verstehen; beim Schätzen werden das ausgewählte Foto und der optionale Hinweis
+an diesen Anbieter gesendet. Ein OpenAI-kompatibler Endpunkt ohne Authentifizierung kann ohne Schlüssel
+verwendet werden.
+
+Die zurückgegebenen Nährwerte bleiben bei allen Anbietern editierbar und füllen erst nach Übernahme
+das normale Trio-Formular vor; dadurch wird nichts automatisch dosiert. Ein Anbieterwechsel erhält die
+gespeicherten Cloud-Konfigurationen und Zugangsschlüssel.
 
 ## Einstellungen entdecken und ändern
 
@@ -222,6 +235,12 @@ Die Mac-Analyseeinstellungen stehen im Ziel `relay_config` (`provider`, `model`,
 Auch sie werden erst nach iPhone-Freigabe gespeichert. Bei einem gleichzeitigen Konfigurationswechsel
 wird ein veralteter Vorschlag abgewiesen. Bei Anbieterwechsel gegebenenfalls Modell und Basis-URL im
 selben Vorschlag angeben. API-Schlüssel am Mac lokal eingeben.
+
+Das iPhone-Ziel `ai_meal` erlaubt zusätzlich `provider: "apple-intelligence"`. Auch bei aktivem Apple
+bleiben `anthropicModel`, `openAIModel`, `openAICompatibleModel` und `customBaseURL` als gespeicherte
+Cloud-Konfiguration im Katalog erreichbar. Dadurch kann ein Vorschlag Anbieter und Modell/URL gemeinsam
+wechseln. Die Feldhinweise kennzeichnen, dass Apple diese Werte nicht verwendet; Apple benötigt keinen
+API-Key und bietet dafür keine Schlüssel-Aktion im Katalog an.
 
 Nach lokaler Authentifizierung reserviert das iPhone einen Vorschlag auf dem Relay (`applying`).
 Ab dann können ein paralleler Chat oder ein erneuter Tageslauf ihn nicht mehr zurückziehen. Die App

@@ -282,7 +282,7 @@ extension Settings {
 
                     Section(header: Text("KI")) {
                         NavigationLink(destination: AIMealSettingsView()) {
-                            Label("KI-Anbieter für Mahlzeitfotos", systemImage: "camera.viewfinder")
+                            Label("KI-Anbieter für Mahlzeiten", systemImage: "sparkles")
                         }
                         NavigationLink(destination: ClaudeBridgeView()) {
                             Label("KI-Bridge (MCP)", systemImage: "sparkles")
