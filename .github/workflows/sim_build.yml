@@ -39,10 +39,9 @@ jobs:
         uses: actions/cache@v5
         with:
           path: ~/Library/Developer/Xcode/DerivedData
-          key: ${{ runner.os }}-simdd-${{ hashFiles('**/Package.resolved', '.submodule-status') }}-${{ github.sha }}
+          key: ${{ runner.os }}-${{ runner.arch }}-xcode26.2-simdd-v2-${{ hashFiles('**/Package.resolved', '.submodule-status') }}-${{ github.sha }}
           restore-keys: |
-            ${{ runner.os }}-simdd-${{ hashFiles('**/Package.resolved', '.submodule-status') }}-
-            ${{ runner.os }}-simdd-
+            ${{ runner.os }}-${{ runner.arch }}-xcode26.2-simdd-v2-${{ hashFiles('**/Package.resolved', '.submodule-status') }}-
 
       - name: Cache BuildTools (SwiftFormat)
         uses: actions/cache@v5
@@ -56,10 +55,11 @@ jobs:
           xcodebuild build \
             -workspace Trio.xcworkspace \
             -scheme "Trio" \
-            -destination "generic/platform=iOS Simulator" \
+            -destination "platform=iOS Simulator,name=iPhone 17,OS=26.2" \
             -skipPackagePluginValidation \
             -skipMacroValidation \
             -quiet \
+            ONLY_ACTIVE_ARCH=YES \
             COMPILER_INDEX_STORE_ENABLE=NO \
             CODE_SIGN_IDENTITY="-" \
             CODE_SIGN_STYLE=Manual \
@@ -80,6 +80,7 @@ jobs:
             -skipPackagePluginValidation \
             -skipMacroValidation \
             -quiet \
+            ONLY_ACTIVE_ARCH=YES \
             COMPILER_INDEX_STORE_ENABLE=NO \
             CODE_SIGN_IDENTITY="-" \
             CODE_SIGN_STYLE=Manual \
