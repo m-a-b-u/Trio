@@ -108,7 +108,7 @@ test('consent displays escaped identity and actual callback, requires owner, coo
   assert.ok(auth.res.text.includes(callback))
   assert.ok(!auth.res.text.includes(ownerKey))
   for (const part of ['Secure', 'HttpOnly', 'SameSite=Strict', 'Path=/']) assert.ok(auth.res.headers.get('set-cookie').includes(part))
-  assert.equal(auth.res.headers.get('referrer-policy'), 'no-referrer')
+  assert.equal(auth.res.headers.get('referrer-policy'), 'same-origin')
   assert.ok(auth.res.headers.get('content-security-policy').includes("frame-ancestors 'none'"))
   assert.equal((await consent(f, auth, {}, { Origin: 'https://evil.example' })).status, 403)
   assert.equal((await consent(f, auth, {}, { Cookie: '' })).status, 403)
@@ -119,6 +119,55 @@ test('consent displays escaped identity and actual callback, requires owner, coo
   const denied = await authorization(f, client)
   const result = await consent(f, denied, { decision: 'deny', ownerKey: '' })
   assert.equal(new URL(result.headers.get('location')).searchParams.get('error'), 'access_denied')
+})
+
+test('consent form preserves its browser Origin while null, absent and foreign origins stay forbidden', async t => {
+  const f = await fixture(t)
+  const auth = await authorization(f, await register(f))
+  // Fetch's append-Origin algorithm makes no-referrer form POSTs send Origin:null.
+  // same-origin retains the source origin for this relative form, without external Referer leakage.
+  assert.equal(auth.res.headers.get('referrer-policy'), 'same-origin')
+  assert.match(auth.res.text, /<form method="post" action="\/consent">/)
+  assert.equal((await consent(f, auth, {}, { Origin: 'null' })).status, 403)
+  assert.equal((await consent(f, auth, {}, { Origin: 'https://chatgpt.com' })).status, 403)
+  assert.equal((await f.request('/consent', {
+    body: { ticket: auth.ticket, ownerKey, decision: 'allow' }, headers: { Cookie: auth.cookie }
+  })).status, 403)
+  const allowed = await consent(f, auth)
+  assert.equal(allowed.status, 302)
+  // The outbound OAuth redirect retains the stricter default policy.
+  assert.equal(allowed.headers.get('referrer-policy'), 'no-referrer')
+  assert.equal(new URL(allowed.headers.get('location')).origin, 'https://claude.ai')
+})
+
+test('consent CSP permits only the selected callback and its 302 redirect never carries the owner password', async t => {
+  const f = await fixture(t)
+  const otherCallback = 'https://chatgpt.com/connector/oauth/synthetic-callback'
+  const client = await register(f, { redirect_uris: [callback, otherCallback] })
+  const auth = await authorization(f, client, { redirect_uri: otherCallback })
+  const policy = auth.res.headers.get('content-security-policy')
+  assert.equal(policy, `default-src 'none'; form-action 'self' ${otherCallback}; frame-ancestors 'none'; base-uri 'none'`)
+  assert.ok(!policy.includes(callback))
+  assert.ok(!auth.res.text.includes(ownerKey))
+  const approval = await consent(f, auth)
+  assert.equal(approval.status, 302)
+  const location = approval.headers.get('location')
+  assert.ok(!location.includes(ownerKey))
+  assert.ok(!location.includes(auth.ticket))
+  assert.deepEqual([...new URL(location).searchParams.keys()].sort(), ['code', 'state'])
+  assert.equal(approval.headers.get('content-security-policy'), "default-src 'none'; form-action 'self'; frame-ancestors 'none'; base-uri 'none'")
+})
+
+test('explicit callback paths cannot inject CSP directives or additional policies', async t => {
+  const specialCallback = "https://synthetic.example/callback;part,'quoted'"
+  const f = await fixture(t, { allowedRedirects: [specialCallback] })
+  const auth = await authorization(f, await register(f, { redirect_uris: [specialCallback] }))
+  assert.equal(auth.res.status, 200)
+  assert.equal(auth.res.headers.get('content-security-policy'),
+    "default-src 'none'; form-action 'self' https://synthetic.example/callback%3Bpart%2C%27quoted%27; frame-ancestors 'none'; base-uri 'none'")
+  const approval = await consent(f, auth)
+  assert.equal(approval.status, 302)
+  assert.equal(new URL(approval.headers.get('location')).pathname, new URL(specialCallback).pathname)
 })
 
 test('SDK enforces S256 PKCE; codes are single use and client, redirect and resource bound', async t => {

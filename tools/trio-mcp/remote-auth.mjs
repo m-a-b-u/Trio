@@ -162,6 +162,13 @@ export function createRemoteAuth({ publicUrl, ownerKeyHash, stateFile, allowedRe
         cookieHash: hash(cookie), attempts: 0, expiresAt: Date.now() + PENDING_TTL }
       pending.set(hash(ticket), item)
       res.cookie(COOKIE, cookie, { secure: true, httpOnly: true, sameSite: 'strict', path: '/', maxAge: PENDING_TTL })
+      // Unlike no-referrer, same-origin preserves Origin on this page's local form POST.
+      // Cross-origin navigation still sends no Referer. Keep the exact Origin check below.
+      res.set('Referrer-Policy', 'same-origin')
+      // Chromium also checks form-action on the 302 callback navigation. Allow only this
+      // validated callback, escaping CSP delimiters in explicitly allowlisted URL paths.
+      const callbackSource = item.redirectUri.replace(/[;,"']/g, char => `%${char.charCodeAt(0).toString(16).toUpperCase()}`)
+      res.set('Content-Security-Policy', `default-src 'none'; form-action 'self' ${callbackSource}; frame-ancestors 'none'; base-uri 'none'`)
       res.type('html').send(consentPage(ticket, item))
     },
     async challengeForAuthorizationCode(client, raw) { return codeFor(client, raw).codeChallenge },
