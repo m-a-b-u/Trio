@@ -147,9 +147,11 @@ Glukose-Statistiken und Verlauf.
 
 Automatische Vorschläge benötigen mindestens sieben Tage Verlauf mit Messwerten an sieben verschiedenen
 Tagen. Höchstens zwei neu erstellte automatische Vorschläge pro Kalendertag; Ablehnung oder Rücknahme
-setzen das Kontingent nicht zurück. Der Server blockiert Zeitplanänderungen über ±20 % und numerische
-Einstellungsänderungen über ±30 %; beide Zielgrenzen werden geprüft. Fehlende Vergleichspläne und
-Änderungen ausgehend von null werden blockiert. Der Prompt verlangt zusätzlich wiederkehrende Muster,
+setzen das Kontingent nicht zurück. Der Server blockiert Zeitplanänderungen über ±20 % und Änderungen
+skalarer numerischer Einstellungswerte über ±30 %; beide Zielgrenzen werden geprüft. Diese relative
+Schrittgrenze gilt nicht für Zahlen innerhalb verschachtelter Objekte oder Listen; dort greifen die
+jeweiligen Typ- und Werteprüfungen am iPhone sowie die lokale Freigabe. Fehlende Vergleichspläne und
+skalare Änderungen ausgehend von null werden blockiert. Der Prompt verlangt zusätzlich wiederkehrende Muster,
 kleinere Schritte und Vorrang für Hypoglykämien. Diese medizinischen Promptregeln ersetzen keine
 persönliche Prüfung. Ein erneuter Lauf zieht offene automatische Vorschläge zurück und kann wegen
 des Tageslimits keinen Ersatz erstellen.
