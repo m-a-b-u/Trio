@@ -4,6 +4,7 @@
 //   node trio-mcp.mjs serve            HTTP relay for the iPhone (run permanently, e.g. via launchd)
 //   node trio-mcp.mjs mcp              MCP server over stdio (started by Claude Desktop / Claude Code)
 //   node trio-mcp.mjs info             Print URL + token to enter in Trio
+//   node trio-mcp.mjs setup [SERVER]   Create a private local QR setup file (macOS)
 //   node trio-mcp.mjs install-launchd  Start the relay automatically at login (macOS)
 //   node trio-mcp.mjs set-api-key      Store the selected provider API key for the daily analysis
 //   node trio-mcp.mjs set-time 07:00   Time of the daily analysis (local time, default 07:00)
@@ -26,6 +27,7 @@ import { checkStepSize, computeStats, historyThrough, mergeHistory, runAIAnalysi
 import { AI_PROVIDERS, AI_PROVIDER_DEFAULTS, aiConfigurationStatus, normalizeBaseURL } from './providers.mjs'
 import { validateSettingsPatch } from './settings.mjs'
 import { patchRelaySettings, relaySettings, withRelayCatalog } from './relay-settings.mjs'
+import { defaultSetupServer, writePrivateSetup } from './setup.mjs'
 
 const HOME = os.homedir()
 const DIR = process.env.TRIO_MCP_DIR || path.join(HOME, '.trio-mcp')
@@ -261,6 +263,10 @@ function serve() {
       const authorized = (req.headers.authorization || '') === `Bearer ${config.token}` ||
         cookieToken === config.token || url.searchParams.get('token') === config.token
       if (!authorized) return send(res, 401, { error: 'unauthorized' })
+
+      if (req.method === 'GET' && url.pathname === '/api/health') {
+        return send(res, 200, { ok: true, service: 'trio-mcp' })
+      }
 
       // --- companion web app ---
       if (req.method === 'GET' && (url.pathname === '/' || url.pathname === '/app')) {
@@ -584,7 +590,7 @@ function installLaunchd() {
   try { execFileSync('launchctl', ['unload', plistPath], { stdio: 'ignore' }) } catch {}
   execFileSync('launchctl', ['load', plistPath])
   console.log(`Installed and started ${label}`)
-  info()
+  console.log('Run setup for the private QR file, or explicitly run info for manual connection credentials.')
 }
 
 async function setApiKey() {
@@ -643,8 +649,17 @@ else if (command === 'set-model') {
 else if (command === 'analyze') api('/api/analyze', { method: 'POST' }).then((r) => console.log(JSON.stringify(r, null, 2)), (e) => { console.error(e.message); process.exit(1) })
 else if (command === 'mcp') mcp().catch((e) => { console.error(e); process.exit(1) })
 else if (command === 'info') info()
+else if (command === 'setup') {
+  try {
+    if (process.argv.length > 4) throw new Error('Usage: setup [SERVER_BASE_URL]')
+    const config = loadConfig()
+    const result = writePrivateSetup({ directory: DIR, baseURL: process.argv[3] ?? defaultSetupServer(config.port), token: config.token })
+    console.log(`Private Einrichtungsdatei: ${result.file}`)
+    console.log(`Server: ${result.server}`)
+  } catch (error) { console.error(error.message); process.exitCode = 1 }
+}
 else if (command === 'install-launchd') installLaunchd()
 else {
-  console.error('Usage: node trio-mcp.mjs <serve|mcp|info|install-launchd|set-provider|set-base-url|set-api-key|set-time|set-model|provider-status|analyze>')
+  console.error('Usage: node trio-mcp.mjs <serve|mcp|info|setup|install-launchd|set-provider|set-base-url|set-api-key|set-time|set-model|provider-status|analyze>')
   process.exit(1)
 }

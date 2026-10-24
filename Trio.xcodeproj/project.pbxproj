@@ -81,6 +81,8 @@
 		3811DE4125C9D4A100A708ED /* SettingsRootView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 3811DE3C25C9D4A100A708ED /* SettingsRootView.swift */; };
 		AA1C1A0D2EB0000400C1A0D1 /* ClaudeBridgeView.swift in Sources */ = {isa = PBXBuildFile; fileRef = AA1C1A0D2EB0000300C1A0D1 /* ClaudeBridgeView.swift */; };
 		AA1C1A0D2EB0000C00C1A0D1 /* AIAdditionalSettings.swift in Sources */ = {isa = PBXBuildFile; fileRef = AA1C1A0D2EB0000B00C1A0D1 /* AIAdditionalSettings.swift */; };
+		AA1C1A0D2EB0001000C1A0D1 /* AIBridgeSetup.swift in Sources */ = {isa = PBXBuildFile; fileRef = AA1C1A0D2EB0000F00C1A0D1 /* AIBridgeSetup.swift */; };
+		AA1C1A0D2EB0001200C1A0D1 /* AIBridgeSetupTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = AA1C1A0D2EB0001100C1A0D1 /* AIBridgeSetupTests.swift */; };
 		AA1C1A0D2EB0000600C1A0D1 /* ClaudeBridgeDiffTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = AA1C1A0D2EB0000500C1A0D1 /* ClaudeBridgeDiffTests.swift */; };
 		AA1C1A0D2EB0000E00C1A0D1 /* AIAdditionalSettingsTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = AA1C1A0D2EB0000D00C1A0D1 /* AIAdditionalSettingsTests.swift */; };
 		AA1C1A0D2EB0000A00C1A0D1 /* ClaudeSettingsCatalogTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = AA1C1A0D2EB0000900C1A0D1 /* ClaudeSettingsCatalogTests.swift */; };
@@ -1186,6 +1188,8 @@
 		3811DE3C25C9D4A100A708ED /* SettingsRootView.swift */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.swift; path = SettingsRootView.swift; sourceTree = "<group>"; };
 		AA1C1A0D2EB0000300C1A0D1 /* ClaudeBridgeView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ClaudeBridgeView.swift; sourceTree = "<group>"; };
 		AA1C1A0D2EB0000B00C1A0D1 /* AIAdditionalSettings.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AIAdditionalSettings.swift; sourceTree = "<group>"; };
+		AA1C1A0D2EB0000F00C1A0D1 /* AIBridgeSetup.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AIBridgeSetup.swift; sourceTree = "<group>"; };
+		AA1C1A0D2EB0001100C1A0D1 /* AIBridgeSetupTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AIBridgeSetupTests.swift; sourceTree = "<group>"; };
 		AA1C1A0D2EB0000500C1A0D1 /* ClaudeBridgeDiffTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ClaudeBridgeDiffTests.swift; sourceTree = "<group>"; };
 		AA1C1A0D2EB0000D00C1A0D1 /* AIAdditionalSettingsTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AIAdditionalSettingsTests.swift; sourceTree = "<group>"; };
 		AA1C1A0D2EB0000900C1A0D1 /* ClaudeSettingsCatalogTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ClaudeSettingsCatalogTests.swift; sourceTree = "<group>"; };
@@ -2584,6 +2588,7 @@
 				3811DE3C25C9D4A100A708ED /* SettingsRootView.swift */,
 				AA1C1A0D2EB0000300C1A0D1 /* ClaudeBridgeView.swift */,
 				AA1C1A0D2EB0000B00C1A0D1 /* AIAdditionalSettings.swift */,
+				AA1C1A0D2EB0000F00C1A0D1 /* AIBridgeSetup.swift */,
 				CE1F6DE82BAF37C90064EB8D /* TidepoolConfigView.swift */,
 				65070A322BFDCB83006F213F /* TidepoolStartView.swift */,
 			);
@@ -3253,6 +3258,7 @@
 				B3919BBB515547118D684CA2 /* SettingsSearchTests.swift */,
 				AA1C1A0D2EB0000500C1A0D1 /* ClaudeBridgeDiffTests.swift */,
 				AA1C1A0D2EB0000D00C1A0D1 /* AIAdditionalSettingsTests.swift */,
+				AA1C1A0D2EB0001100C1A0D1 /* AIBridgeSetupTests.swift */,
 				AA1C1A0D2EB0000900C1A0D1 /* ClaudeSettingsCatalogTests.swift */,
 				AA1C1A0D2EB0000700C1A0D1 /* AIMealProviderTests.swift */,
 				B3919BBB515547118D684CF2 /* AlgorithmSuggestedBolusTests.swift */,
@@ -5327,6 +5333,7 @@
 				3811DE4125C9D4A100A708ED /* SettingsRootView.swift in Sources */,
 				AA1C1A0D2EB0000400C1A0D1 /* ClaudeBridgeView.swift in Sources */,
 				AA1C1A0D2EB0000C00C1A0D1 /* AIAdditionalSettings.swift in Sources */,
+				AA1C1A0D2EB0001000C1A0D1 /* AIBridgeSetup.swift in Sources */,
 				38192E04261B82FA0094D973 /* ReachabilityManager.swift in Sources */,
 				38E44539274E411700EC9A94 /* Disk+UIImage.swift in Sources */,
 				3BAD36CC2D7D420E00CC298D /* CoreDataInitializationCoordinator.swift in Sources */,
@@ -6072,6 +6079,7 @@
 				41740E936552456AAC0EDAC3 /* SettingsSearchTests.swift in Sources */,
 				AA1C1A0D2EB0000600C1A0D1 /* ClaudeBridgeDiffTests.swift in Sources */,
 				AA1C1A0D2EB0000E00C1A0D1 /* AIAdditionalSettingsTests.swift in Sources */,
+				AA1C1A0D2EB0001200C1A0D1 /* AIBridgeSetupTests.swift in Sources */,
 				AA1C1A0D2EB0000A00C1A0D1 /* ClaudeSettingsCatalogTests.swift in Sources */,
 				AA1C1A0D2EB0000800C1A0D1 /* AIMealProviderTests.swift in Sources */,
 				B015AFF52E600000000D7351 /* AdjustmentManagerTests.swift in Sources */,

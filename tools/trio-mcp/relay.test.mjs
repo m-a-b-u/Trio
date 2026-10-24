@@ -86,6 +86,18 @@ const automaticProposal = () => ({
   target: 'basal_profile', schedule: [{ time: '00:00', value: 1.1 }], reason: 'Synthetic'
 })
 
+test('authenticated health check does not load the therapy database or history', async t => {
+  const { dir, request } = await fixture(t)
+  // loadDB would throw on this deliberately invalid synthetic shape.
+  const invalidDB = '{"proposals":null}'
+  await fs.writeFile(path.join(dir, 'db.json'), invalidDB)
+  await fs.writeFile(path.join(dir, 'history.json'), 'not-json')
+  assert.deepEqual(await request('/api/health'), { status: 200, body: { ok: true, service: 'trio-mcp' } })
+  assert.equal((await request('/api/health', undefined, false)).status, 401)
+  assert.equal(await fs.readFile(path.join(dir, 'db.json'), 'utf8'), invalidDB)
+  assert.equal(await fs.readFile(path.join(dir, 'history.json'), 'utf8'), 'not-json')
+})
+
 test('relay starts with isolated storage, requires auth, and merges synthetic history', async t => {
   const { request } = await fixture(t)
   assert.equal((await request('/api/state', undefined, false)).status, 401)

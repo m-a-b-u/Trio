@@ -174,18 +174,24 @@ enum ClaudeBridgeConfig {
         return value
     }
 
-    static func setToken(_ value: String?) {
+    @discardableResult static func setToken(_ value: String?) -> Bool {
         let base: [String: Any] = [
             kSecClass as String: kSecClassGenericPassword,
             kSecAttrService as String: service,
             kSecAttrAccount as String: account
         ]
-        SecItemDelete(base as CFDictionary)
-        guard let value = value?.trimmingCharacters(in: .whitespacesAndNewlines), !value.isEmpty else { return }
+        guard let value = value?.trimmingCharacters(in: .whitespacesAndNewlines), !value.isEmpty else {
+            let status = SecItemDelete(base as CFDictionary)
+            return status == errSecSuccess || status == errSecItemNotFound
+        }
+        let attributes: [String: Any] = [kSecValueData as String: Data(value.utf8)]
+        let status = SecItemUpdate(base as CFDictionary, attributes as CFDictionary)
+        if status == errSecSuccess { return true }
+        guard status == errSecItemNotFound else { return false }
         var add = base
         add[kSecValueData as String] = Data(value.utf8)
         add[kSecAttrAccessible as String] = kSecAttrAccessibleAfterFirstUnlockThisDeviceOnly
-        SecItemAdd(add as CFDictionary, nil)
+        return SecItemAdd(add as CFDictionary, nil) == errSecSuccess
     }
 
     static var isConfigured: Bool { !baseURL.isEmpty && token != nil }
@@ -582,6 +588,16 @@ private func claudeFormat(_ value: Double) -> String {
     private var storage: FileStorage? { resolver?.resolve(FileStorage.self) }
     private var broadcaster: Broadcaster? { resolver?.resolve(Broadcaster.self) }
     private var deviceManager: DeviceDataManager? { resolver?.resolve(DeviceDataManager.self) }
+
+    /// A newly imported connection must not inherit proposals or upload checkpoints from its predecessor.
+    func resetConnectionState() {
+        pending = []
+        lastSync = nil
+        lastError = nil
+        lastHistoryUpload = nil
+        notifiedIDs = []
+        history = []
+    }
 
     func start(resolver: Resolver) {
         guard self.resolver == nil else { return }
@@ -1213,7 +1229,9 @@ private func claudeFormat(_ value: Double) -> String {
             }
             guard !new.enabled || !new.baseURL.isEmpty else { throw ClaudeBridgeError.badURL }
             return ClaudePreparedChange(proposal: proposal, title: "KI-Bridge-Verbindung", lines: lines) {
-                if new.baseURL != old.baseURL { ClaudeBridgeConfig.setToken(nil) }
+                if new.baseURL != old.baseURL, !ClaudeBridgeConfig.setToken(nil) {
+                    throw AIBridgeSetupError.keychain
+                }
                 ClaudeBridgeConfig.baseURL = new.baseURL
                 ClaudeBridgeConfig.enabled = new.enabled
             }
@@ -1395,6 +1413,7 @@ struct ClaudeBridgeView: View {
     @State private var tokenInput = ""
     @State private var enabled = ClaudeBridgeConfig.enabled
     @State private var hasToken = ClaudeBridgeConfig.token != nil
+    @State private var configurationError: String?
 
     var body: some View {
         Form {
@@ -1430,12 +1449,17 @@ struct ClaudeBridgeView: View {
                     .textInputAutocapitalization(.never)
                     .autocorrectionDisabled()
                 Button("Speichern & verbinden") {
+                    if !tokenInput.isEmpty, !ClaudeBridgeConfig.setToken(tokenInput) {
+                        configurationError = AIBridgeSetupError.keychain.localizedDescription
+                        return
+                    }
                     ClaudeBridgeConfig.baseURL = url
-                    if !tokenInput.isEmpty { ClaudeBridgeConfig.setToken(tokenInput) }
                     tokenInput = ""
                     hasToken = ClaudeBridgeConfig.token != nil
+                    configurationError = nil
                     Task { await bridge.sync() }
                 }
+                if let configurationError { Text(configurationError).font(.caption).foregroundStyle(.red) }
                 HStack {
                     Text("Status")
                     Spacer()
@@ -1467,6 +1491,18 @@ struct ClaudeBridgeView: View {
         }
         .navigationTitle("KI-Bridge")
         .navigationBarTitleDisplayMode(.inline)
+        .onAppear(perform: refreshConfiguration)
+        .onReceive(Foundation.NotificationCenter.default.publisher(for: .aiBridgeConfigurationChanged)) { _ in
+            refreshConfiguration()
+        }
+    }
+
+    private func refreshConfiguration() {
+        url = ClaudeBridgeConfig.baseURL
+        enabled = ClaudeBridgeConfig.enabled
+        hasToken = ClaudeBridgeConfig.token != nil
+        tokenInput = ""
+        configurationError = nil
     }
 }
 

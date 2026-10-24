@@ -19,12 +19,24 @@ mit Vorher/Nachher-Diff angezeigt und erst nach lokaler Authentifizierung (Face 
 cd ~/Developer/Trio/tools/trio-mcp
 npm install
 node trio-mcp.mjs install-launchd
-node trio-mcp.mjs info                 # Server-URL + Token für Trio, Companion-Link
+node trio-mcp.mjs setup                # Private QR-Datei am Mac erzeugen
 ```
 
-Ohne launchd: `node trio-mcp.mjs serve`. In Trio unter **Einstellungen → KI → KI-Bridge (MCP)**
-URL und Token eintragen und verbinden. iPhone und Mac brauchen eine direkte Netzwerkverbindung,
-z. B. WLAN oder VPN; iOS muss den Zugriff auf das lokale Netzwerk erlauben.
+Ohne launchd: `node trio-mcp.mjs serve`. `setup` erzeugt `~/.trio-mcp/setup.html` mit Dateirechten 0600.
+Diese Datei am Mac öffnen und den QR-Code mit der iPhone-Kamera scannen; der aktuelle Trio-Build öffnet
+die lokale Einrichtung. Server prüfen, Verbindung testen und bestätigen. Der Test ruft nur das
+authentifizierte `/api/health` auf; erst die aktivierte Synchronisierung überträgt Einstellungen und Verlauf.
+
+Standardadresse ist der lokale Mac-Hostname, z. B. `http://Odin.local:8765`. Alternativ:
+`node trio-mcp.mjs setup http://192.168.1.20:8765`. HTTP ist auf `.local`, `localhost` und private,
+link-lokale oder Loopback-IPv4-Adressen begrenzt; IPv6 benötigt HTTPS. iPhone und Mac brauchen eine direkte
+Netzwerkverbindung, z. B. WLAN oder VPN; iOS muss den Zugriff auf das lokale Netzwerk erlauben.
+
+Der QR-Code wird offline mit macOS CoreImage erzeugt und enthält den **dauerhaften Bridge-Token**,
+keinen Einmalcode. Datei/QR privat halten, nicht weitergeben oder ins Repository aufnehmen und nach
+der Einrichtung löschen. Die CLI gibt nur Dateipfad und Server aus. Anbieter-Schlüssel werden nicht übertragen.
+Manuelle Einrichtung bleibt unter **Einstellungen → KI → KI-Bridge (MCP)** möglich;
+`node trio-mcp.mjs info` zeigt dafür Serveradresse und Token an.
 
 ## Anbieter für Tagesanalysen wählen
 

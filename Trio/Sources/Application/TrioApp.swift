@@ -40,6 +40,7 @@ extension Notification.Name {
     @State private var showLoadingError = false
     @State private var showOnboardingCompletedSplash = false
     @State private var showMigrationError: Bool = false
+    @State private var pendingBridgeSetup: AIBridgeSetupPresentation?
 
     // Dependencies Assembler
     // contain all dependencies Assemblies
@@ -357,7 +358,6 @@ extension Notification.Name {
                             )
                             .environment(appState)
                             .environmentObject(Icons())
-                            .onOpenURL(perform: handleURL)
                     }
                 } else if onboardingManager.shouldShowOnboarding {
                     // Show onboarding if needed
@@ -374,12 +374,12 @@ extension Notification.Name {
                         .environment(\.managedObjectContext, coreDataStack.persistentContainer.viewContext)
                         .environment(appState)
                         .environmentObject(Icons())
-                        .onOpenURL(perform: handleURL)
                 }
             }
             // Global upper bound on Dynamic Type: keep accessibility scaling but stop before the
             // extreme sizes that shatter dense layouts. Fragile screens cap tighter (see Home, Statistics).
             .dynamicTypeSize(...DynamicTypeSize.accessibility1)
+            .onOpenURL(perform: handleURL)
             .onReceive(Foundation.NotificationCenter.default.publisher(for: .onboardingCompleted)) { _ in
                 Task { @MainActor in
                     self.showOnboardingCompletedSplash = true
@@ -391,6 +391,7 @@ extension Notification.Name {
             .onChange(of: showLoadingView) { _, isLoading in
                 if !isLoading {
                     presentDevelopmentBranchWarningIfNeeded()
+                    presentPendingBridgeSetup()
                 }
             }
             // A first-time user is still in onboarding when the loading screen goes away, so the
@@ -531,14 +532,23 @@ extension Notification.Name {
         try await overrideRunDeletion
     }
 
-    private func handleURL(_ url: URL) {
+    @MainActor private func handleURL(_ url: URL) {
         let components = URLComponents(url: url, resolvingAgainstBaseURL: false)
 
-        switch components?.host {
+        switch components?.host?.lowercased() {
+        case "ai-bridge-setup":
+            pendingBridgeSetup = AIBridgeSetupPresentation(url: url)
+            presentPendingBridgeSetup()
         case "device-select-resp":
             resolver.resolve(NotificationCenter.self)!.post(name: .openFromGarminConnect, object: url)
         default: break
         }
+    }
+
+    @MainActor private func presentPendingBridgeSetup() {
+        guard !showLoadingView, let pendingBridgeSetup else { return }
+        AIBridgeSetupPresenter.present(pendingBridgeSetup)
+        self.pendingBridgeSetup = nil
     }
 }
 
