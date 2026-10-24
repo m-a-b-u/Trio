@@ -638,7 +638,7 @@ extension Treatments {
             let maxAmount = Double(min(amount, maxBolus))
 
             do {
-                let authenticated = try await unlockmanager.unlock()
+                let authenticated = try await unlockmanager.unlockForManualBolusEntry()
                 if authenticated {
                     // show loading animation
                     await MainActor.run {

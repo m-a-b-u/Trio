@@ -641,6 +641,28 @@ final class BaseAPSManager: APSManager, Injectable {
             return
         }
 
+        #if targetEnvironment(macCatalyst)
+            if !isSMB {
+                do {
+                    _ = try await DeviceOwnerAuthentication.authenticate(
+                        String(localized: "Confirm this manual bolus with Touch ID.")
+                    )
+                } catch {
+                    let message = String(localized: "Bolus not delivered. Touch ID authentication is required.")
+                    lastError.send(APSError.apsError(message: message))
+                    let broadcaster = self.broadcaster
+                    await MainActor.run {
+                        broadcaster?.notify(BolusFailureObserver.self, on: .main) {
+                            $0.bolusDidFail()
+                        }
+                    }
+                    callback?(false, message)
+                    return
+                }
+            }
+        #endif
+
+        // Authentication can outlive a pump/status change; resolve both only after it completes.
         if let error = verifyStatus() {
             processError(error)
             // Capture broadcaster and queue before async context

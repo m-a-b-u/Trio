@@ -21,10 +21,18 @@ extension PumpConfig {
 
         var body: some View {
             List {
+                if MacDeviceOperationPolicy.isRestrictedBuild {
+                    Section {
+                        Text(MacDeviceOperationPolicy.title).font(.headline)
+                        Text(MacDeviceOperationPolicy.explanation).font(.footnote)
+                    }
+                }
                 Section(
                     header: Text("Pump Integration to Trio"),
                     content: {
-                        if bluetoothManager.bluetoothAuthorization != .authorized {
+                        if !MacDeviceOperationPolicy.isRestrictedBuild,
+                           bluetoothManager.bluetoothAuthorization != .authorized
+                        {
                             HStack {
                                 Spacer()
                                 BluetoothRequiredView()

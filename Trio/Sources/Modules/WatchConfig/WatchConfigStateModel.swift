@@ -1,13 +1,17 @@
 import Combine
-import ConnectIQ
+#if !targetEnvironment(macCatalyst)
+    import ConnectIQ
+#endif
 import SwiftUI
 
 extension WatchConfig {
     final class StateModel: BaseStateModel<Provider> {
-        @Injected() private var garmin: GarminManager!
+        #if !targetEnvironment(macCatalyst)
+            @Injected() private var garmin: GarminManager!
+            @Published var devices: [IQDevice] = []
+        #endif
 
         @Published var units: GlucoseUnits = .mgdL
-        @Published var devices: [IQDevice] = []
         @Published var confirmBolusFaster = false
         @Published var showForecastWatch = false
 
@@ -25,9 +29,12 @@ extension WatchConfig {
             subscribeSetting(\.confirmBolusFaster, on: $confirmBolusFaster) { confirmBolusFaster = $0 }
             subscribeSetting(\.showForecastWatch, on: $showForecastWatch) { showForecastWatch = $0 }
 
-            devices = garmin.devices
+            #if !targetEnvironment(macCatalyst)
+                devices = garmin.devices
+            #endif
         }
 
+        #if !targetEnvironment(macCatalyst)
         /// Prompts the user to select Garmin devices and updates the device list
         func selectGarminDevices() {
             garmin.selectDevices()
@@ -40,6 +47,7 @@ extension WatchConfig {
         func deleteGarminDevice() {
             garmin.updateDeviceList(devices)
         }
+        #endif
 
         /// Handles watchface selection changes by automatically disabling data transmission
         /// to allow the user to switch watchfaces on their Garmin device without data conflicts

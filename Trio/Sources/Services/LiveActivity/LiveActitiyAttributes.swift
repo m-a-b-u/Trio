@@ -1,7 +1,9 @@
-import ActivityKit
+#if !targetEnvironment(macCatalyst)
+    import ActivityKit
+#endif
 import Foundation
 
-struct LiveActivityAttributes: ActivityAttributes {
+struct LiveActivityAttributes: Codable {
     enum LiveActivityItem: String, Hashable, Codable, Equatable {
         case currentGlucoseLarge
         case currentGlucose
@@ -67,3 +69,7 @@ struct LiveActivityAttributes: ActivityAttributes {
 
     let startDate: Date
 }
+
+#if !targetEnvironment(macCatalyst)
+    extension LiveActivityAttributes: ActivityAttributes {}
+#endif

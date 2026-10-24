@@ -12,6 +12,13 @@ extension PumpConfig {
         weak var setupDelegate: PumpManagerOnboardingDelegate?
 
         func makeUIViewController(context _: UIViewControllerRepresentableContext<PumpSetupView>) -> UIViewController {
+            guard MacDeviceOperationPolicy.permitsPump(identifier: pumpEntry.id) else {
+                return UIHostingController(rootView: ContentUnavailableView(
+                    MacDeviceOperationPolicy.title,
+                    systemImage: "exclamationmark.shield",
+                    description: Text(MacDeviceOperationPolicy.explanation)
+                ))
+            }
             // var setupViewController: PumpManagerSetupViewController & UIViewController & CompletionNotifying
             var setupViewController: SetupUIResult<
                 PumpManagerViewController,

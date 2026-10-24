@@ -1,3 +1,4 @@
+#if !targetEnvironment(macCatalyst)
 import ConnectIQ
 import SwiftUI
 
@@ -195,3 +196,20 @@ struct WatchConfigGarminView: View {
         }
     }
 }
+
+#else
+import SwiftUI
+
+struct WatchConfigGarminView: View {
+    @ObservedObject var state: WatchConfig.StateModel
+
+    var body: some View {
+        ContentUnavailableView(
+            "Garmin unavailable on Mac",
+            systemImage: "exclamationmark.circle",
+            description: Text("Garmin watch connections are not available in this Mac app.")
+        )
+        .navigationTitle("Garmin")
+    }
+}
+#endif

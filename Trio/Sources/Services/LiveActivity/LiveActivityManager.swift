@@ -1,10 +1,13 @@
-import ActivityKit
+#if !targetEnvironment(macCatalyst)
+    import ActivityKit
+#endif
 import Combine
 import CoreData
 import Foundation
 import Swinject
 import UIKit
 
+#if !targetEnvironment(macCatalyst)
 @available(iOS 16.2, *) private struct ActiveActivity {
     let activity: Activity<LiveActivityAttributes>
 
@@ -26,6 +29,7 @@ import UIKit
         return -activity.attributes.startDate.timeIntervalSinceNow > TimeInterval(60 * 60)
     }
 }
+#endif
 
 final class LiveActivityData: ObservableObject {
     /// Determination data used to update live activity state.
@@ -42,6 +46,7 @@ final class LiveActivityData: ObservableObject {
     @Published var widgetItems: [LiveActivityAttributes.LiveActivityItem]?
 }
 
+#if !targetEnvironment(macCatalyst)
 /// A service managing live activity updates and state management.
 ///
 /// This class handles the creation, update, and termination of live activities based on various data sources
@@ -428,3 +433,5 @@ final class LiveActivityData: ObservableObject {
         await pushUpdate(content)
     }
 }
+
+#endif

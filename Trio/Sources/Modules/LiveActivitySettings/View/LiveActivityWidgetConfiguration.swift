@@ -4,6 +4,7 @@ import SwiftUI
 import Swinject
 import UniformTypeIdentifiers
 
+#if !targetEnvironment(macCatalyst)
 struct LiveActivityWidgetConfiguration: BaseView {
     let resolver: Resolver
 
@@ -352,6 +353,17 @@ struct LiveActivityWidgetConfiguration: BaseView {
         }
     }
 }
+
+#else
+struct LiveActivityWidgetConfiguration: BaseView {
+    let resolver: Resolver
+    @ObservedObject var state: LiveActivitySettings.StateModel
+
+    var body: some View {
+        LiveActivitySettings.RootView(resolver: resolver)
+    }
+}
+#endif
 
 // Extension for UserDefaults to save and load the order
 extension UserDefaults {

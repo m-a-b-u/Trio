@@ -232,7 +232,10 @@ final class BaseDeviceDataManager: DeviceDataManager, Injectable {
     }
 
     func setupPumpManager() {
-        if let pumpManagerRawValue = rawPumpManager ?? UserDefaults.standard.legacyPumpManagerRawValue {
+        let storedPump = rawPumpManager ?? UserDefaults.standard.legacyPumpManagerRawValue
+        // Do not assign nil: its observer resets preferences and battery records.
+        guard MacDeviceOperationPolicy.permitsPumpRestore(storedPump) else { return }
+        if let pumpManagerRawValue = storedPump {
             pumpManager = pumpManagerFromRawValue(pumpManagerRawValue)
         } else {
             pumpManager = nil
@@ -316,7 +319,8 @@ final class BaseDeviceDataManager: DeviceDataManager, Injectable {
     }
 
     private func pumpManagerFromRawValue(_ rawValue: [String: Any]) -> PumpManagerUI? {
-        guard let rawState = rawValue["state"] as? PumpManager.RawStateValue,
+        guard MacDeviceOperationPolicy.permitsPumpRestore(rawValue),
+              let rawState = rawValue["state"] as? PumpManager.RawStateValue,
               let Manager = pumpManagerTypeFromRawValue(rawValue)
         else {
             return nil

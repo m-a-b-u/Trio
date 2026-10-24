@@ -77,13 +77,18 @@ extension Notification.Name {
         _ = resolver.resolve(WatchManager.self)!
         _ = resolver.resolve(ContactImageManager.self)!
         _ = resolver.resolve(HealthKitManager.self)!
-        _ = resolver.resolve(GarminManager.self)!
+        #if !targetEnvironment(macCatalyst)
+            _ = resolver.resolve(GarminManager.self)!
+        #endif
         _ = resolver.resolve(BluetoothStateManager.self)!
         _ = resolver.resolve(PluginManager.self)!
         _ = resolver.resolve(AlertPermissionsChecker.self)!
-        if #available(iOS 16.2, *) {
-            _ = resolver.resolve(LiveActivityManager.self)!
-        }
+        #if !targetEnvironment(macCatalyst)
+            if #available(iOS 16.2, *) {
+                _ = resolver.resolve(LiveActivityManager.self)!
+            }
+        #endif
+        _ = resolver.resolve(WidgetSnapshotPublisher.self)!
         _ = resolver.resolve(IOBService.self)!
         _ = resolver.resolve(GlucoseAlertCoordinator.self)!
         _ = resolver.resolve(NotLoopingMonitor.self)!
@@ -539,8 +544,10 @@ extension Notification.Name {
         case "ai-bridge-setup":
             pendingBridgeSetup = AIBridgeSetupPresentation(url: url)
             presentPendingBridgeSetup()
-        case "device-select-resp":
-            resolver.resolve(NotificationCenter.self)!.post(name: .openFromGarminConnect, object: url)
+        #if !targetEnvironment(macCatalyst)
+            case "device-select-resp":
+                resolver.resolve(NotificationCenter.self)!.post(name: .openFromGarminConnect, object: url)
+        #endif
         default: break
         }
     }

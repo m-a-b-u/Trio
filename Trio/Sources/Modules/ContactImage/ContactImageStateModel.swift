@@ -1,4 +1,3 @@
-import ConnectIQ
 import CoreData
 import SwiftUI
 

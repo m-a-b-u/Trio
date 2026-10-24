@@ -181,7 +181,7 @@ extension Home.StateModel {
             pumpInitialSettings.maxBolusUnits
         )
         do {
-            guard try await unlockmanager.unlock() else { return (.failed, nil) }
+            guard try await unlockmanager.unlockForManualBolusEntry() else { return (.failed, nil) }
             var bolusSucceeded = false
             var pumpMessage: String?
             await apsManager.enactBolus(amount: delivery, isSMB: false) { success, message in

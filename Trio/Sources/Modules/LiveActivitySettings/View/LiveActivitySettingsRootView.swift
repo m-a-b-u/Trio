@@ -1,3 +1,4 @@
+#if !targetEnvironment(macCatalyst)
 import ActivityKit
 import SwiftUI
 import Swinject
@@ -277,3 +278,24 @@ extension LiveActivitySettings {
         }
     }
 }
+
+#else
+import SwiftUI
+import Swinject
+
+extension LiveActivitySettings {
+    struct RootView: BaseView {
+        let resolver: Resolver
+        @StateObject var state = StateModel()
+
+        var body: some View {
+            ContentUnavailableView(
+                "Live Activities unavailable on Mac",
+                systemImage: "exclamationmark.circle",
+                description: Text("Live Activities are not available in this Mac app.")
+            )
+            .navigationTitle("Live Activity")
+        }
+    }
+}
+#endif

@@ -38,6 +38,11 @@ jobs:
       - name: Test AI relay with synthetic data
         run: node --test tools/trio-mcp/*.test.mjs
 
+      - name: Test local status snapshots and menu bar
+        run: |
+          swift test --package-path Shared/StatusWidget
+          swift test --package-path TrioMac/MenuBar
+
       - name: Restore DerivedData
         uses: actions/cache@v5
         with:
@@ -77,6 +82,8 @@ jobs:
             -workspace Trio.xcworkspace \
             -scheme "Trio Tests" \
             -destination "platform=iOS Simulator,name=iPhone 17,OS=26.2" \
+            -only-testing:TrioTests/UnlockManagerTests \
+            -only-testing:TrioTests/MacDeviceOperationPolicyTests \
             -only-testing:TrioTests/ClaudeBridgeDiffTests \
             -only-testing:TrioTests/AIMealProviderTests \
             -only-testing:TrioTests/AppleIntelligenceMealTests \
@@ -102,7 +109,7 @@ jobs:
           xcrun xcresulttool get test-results summary \
             --path "$RUNNER_TEMP/claude-bridge-tests.xcresult" \
             | tee "$RUNNER_TEMP/claude-bridge-tests.json"
-          minimum_tests=$(python3 -c 'from pathlib import Path; print(sum(Path("TrioTests/" + name + ".swift").read_text().count("@Test(") for name in ["ClaudeBridgeDiffTests", "AIMealProviderTests", "AppleIntelligenceMealTests", "ClaudeSettingsCatalogTests", "AIAdditionalSettingsTests", "AIBridgeSetupTests"]))')
+          minimum_tests=$(python3 -c 'from pathlib import Path; print(sum(Path("TrioTests/" + name + ".swift").read_text().count("@Test(") for name in ["UnlockManagerTests", "MacDeviceOperationPolicyTests", "ClaudeBridgeDiffTests", "AIMealProviderTests", "AppleIntelligenceMealTests", "ClaudeSettingsCatalogTests", "AIAdditionalSettingsTests", "AIBridgeSetupTests"]))')
           jq -e --argjson minimum "$minimum_tests" '.totalTestCount >= $minimum and .passedTests == .totalTestCount and .failedTests == 0 and .skippedTests == 0' \
             "$RUNNER_TEMP/claude-bridge-tests.json"
 

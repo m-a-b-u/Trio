@@ -339,7 +339,7 @@ extension DeviceCatalog {
     static let defaultAllowedInsulinTypes: [InsulinType] = [.apidra, .humalog, .novolog, .fiasp, .lyumjev]
 
     /// Order here is the order shown in the picker, within each manufacturer section.
-    static let cgms: [CGMCatalogEntry] = [
+    private static let catalogCGMs: [CGMCatalogEntry] = [
         CGMCatalogEntry(.native(.none), manufacturer: .otherSources),
 
         // Both Libre names carry their variants inline, matching the titles the driver authors chose upstream.
@@ -399,7 +399,7 @@ extension DeviceCatalog {
         )
     ]
 
-    static let pumps: [PumpCatalogEntry] = [
+    private static let catalogPumps: [PumpCatalogEntry] = [
         PumpCatalogEntry(
             OmniPumpManager.self,
             manufacturer: .insulet,
@@ -451,6 +451,9 @@ extension DeviceCatalog {
 // MARK: - Lookups
 
 extension DeviceCatalog {
+    static let cgms = catalogCGMs.filter { MacDeviceOperationPolicy.permitsGlucoseSource($0.cgmType.rawValue) }
+    static let pumps = catalogPumps.filter { MacDeviceOperationPolicy.permitsPump(identifier: $0.id) }
+
     static let cgmManagerEntries: [CGMCatalogEntry] = cgms.filter { $0.managerType != nil }
 
     static let pumpManagersByIdentifier: [String: PumpManagerUI.Type] = pumps.reduce(into: [:]) { result, entry in
@@ -464,7 +467,7 @@ extension DeviceCatalog {
 
     /// Pumps offered during onboarding: real hardware only, since onboarding is configuring actual therapy.
     static var onboardingPumps: [PumpCatalogEntry] {
-        pumps.filter { $0.manufacturer != .simulator }
+        MacDeviceOperationPolicy.isRestrictedBuild ? pumps : pumps.filter { $0.manufacturer != .simulator }
     }
 
     /// Resolves an already-paired pump to an onboarding-eligible entry.

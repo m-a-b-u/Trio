@@ -237,6 +237,10 @@ final class BaseFetchGlucoseManager: FetchGlucoseManager, Injectable {
     }
 
     func updateGlucoseSource(cgmGlucoseSourceType: CGMType, cgmGlucosePluginId: String, newManager: CGMManagerUI?) {
+        // Reject before changing calibrations, persisted manager state, or source settings.
+        guard MacDeviceOperationPolicy.permitsGlucoseSource(cgmGlucoseSourceType.rawValue),
+              !MacDeviceOperationPolicy.isRestrictedBuild || newManager == nil
+        else { return }
         // if changed, remove all calibrations
         if self.cgmGlucoseSourceType != cgmGlucoseSourceType || self.cgmGlucosePluginId != cgmGlucosePluginId {
             removeCalibrations()
@@ -286,7 +290,8 @@ final class BaseFetchGlucoseManager: FetchGlucoseManager, Injectable {
 
     /// Upload cgmManager from raw value
     func cgmManagerFromRawValue(_ rawValue: [String: Any]) -> CGMManagerUI? {
-        guard let rawState = rawValue["state"] as? CGMManager.RawStateValue,
+        guard !MacDeviceOperationPolicy.isRestrictedBuild,
+              let rawState = rawValue["state"] as? CGMManager.RawStateValue,
               let Manager = pluginCGMManager.getCGMManagerTypeByIdentifier(cgmGlucosePluginId)
         else {
             return nil

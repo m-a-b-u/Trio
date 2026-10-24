@@ -2,7 +2,7 @@ import Foundation
 import LoopKit
 import os.log
 
-#if canImport(AlarmKit)
+#if canImport(AlarmKit) && !targetEnvironment(macCatalyst)
     import ActivityKit
     import AlarmKit
     import AppIntents
@@ -32,7 +32,7 @@ final class CriticalAlertAlarmScheduler {
     /// When false, callers should use the `CriticalAlertAudioPlayer` fallback.
     var isAuthorizedAndAvailable: Bool {
         guard #available(iOS 26, *) else { return false }
-        #if canImport(AlarmKit)
+        #if canImport(AlarmKit) && !targetEnvironment(macCatalyst)
             return AlarmManager.shared.authorizationState == .authorized
         #else
             return false
@@ -43,7 +43,7 @@ final class CriticalAlertAlarmScheduler {
     /// below iOS 26 or once already granted/denied.
     static func requestAuthorization() async {
         guard #available(iOS 26, *) else { return }
-        #if canImport(AlarmKit)
+        #if canImport(AlarmKit) && !targetEnvironment(macCatalyst)
             guard AlarmManager.shared.authorizationState == .notDetermined else { return }
             do {
                 _ = try await AlarmManager.shared.requestAuthorization()
@@ -68,7 +68,7 @@ final class CriticalAlertAlarmScheduler {
     /// caller can still play the fallback rather than leaving the alert silent.
     @discardableResult func scheduleAlarm(for alert: Alert, onScheduleFailure: @escaping () -> Void) -> Bool {
         guard #available(iOS 26, *), isAuthorizedAndAvailable else { return false }
-        #if canImport(AlarmKit)
+        #if canImport(AlarmKit) && !targetEnvironment(macCatalyst)
             cancelAlarm(for: alert.identifier)
 
             let stopButton = AlarmButton(
@@ -126,7 +126,7 @@ final class CriticalAlertAlarmScheduler {
     /// Cancel/stop the AlarmKit alarm scheduled for the given alert, if any.
     func cancelAlarm(for identifier: Alert.Identifier) {
         guard #available(iOS 26, *) else { return }
-        #if canImport(AlarmKit)
+        #if canImport(AlarmKit) && !targetEnvironment(macCatalyst)
             guard let id = alarmsByAlert.removeValue(forKey: identifier) else { return }
             // The alarm may be ringing or merely scheduled; try both and ignore errors.
             try? AlarmManager.shared.stop(id: id)
@@ -169,7 +169,7 @@ final class CriticalAlertAlarmScheduler {
     }
 }
 
-#if canImport(AlarmKit)
+#if canImport(AlarmKit) && !targetEnvironment(macCatalyst)
     /// Trio critical-alert alarms are alert-only (no countdown / custom Live
     /// Activity), so this carries nothing.
     @available(iOS 26, *) struct EmptyAlarmMetadata: AlarmMetadata {

@@ -1358,9 +1358,8 @@ private func claudeFormat(_ value: Double) -> String {
     }
 
     private func authenticate(_ reason: String) async throws {
-        let context = LAContext()
         do {
-            let ok = try await context.evaluatePolicy(.deviceOwnerAuthentication, localizedReason: reason)
+            let ok = try await DeviceOwnerAuthentication.authenticate(reason)
             guard ok else { throw ClaudeBridgeError.authenticationFailed }
         } catch {
             throw ClaudeBridgeError.authenticationFailed

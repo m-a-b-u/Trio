@@ -280,6 +280,15 @@ extension Settings {
                     )
                     .listRowBackground(Color.chart)
 
+                    #if targetEnvironment(macCatalyst)
+                        Section("Mac") {
+                            NavigationLink(destination: TrioMacSettingsView()) {
+                                Label("Menüleiste & Widgets", systemImage: "menubar.rectangle")
+                            }
+                        }
+                        .listRowBackground(Color.chart)
+                    #endif
+
                     Section(header: Text("KI")) {
                         NavigationLink(destination: AIMealSettingsView()) {
                             Label("KI-Anbieter für Mahlzeiten", systemImage: "sparkles")

@@ -15,7 +15,9 @@ import Swinject
     @Injected() var apsManager: APSManager!
     @Injected() var overrideStorage: OverrideStorage!
     @Injected() var adjustmentManager: AdjustmentManager!
-    @Injected() var liveActivityManager: LiveActivityManager!
+    #if !targetEnvironment(macCatalyst)
+        @Injected() var liveActivityManager: LiveActivityManager!
+    #endif
     @Injected() var pumpHistoryStorage: PumpHistoryStorage!
     @Injected() var iobService: IOBService!
     @Injected() var bolusSafetyValidator: BolusSafetyValidator!

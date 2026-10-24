@@ -1,3 +1,4 @@
+#if !targetEnvironment(macCatalyst)
 import Combine
 import ConnectIQ
 import CoreData
@@ -1155,3 +1156,5 @@ extension BaseGarminManager: BGTargetsObserver {
         sendSettingsUpdateThrottled()
     }
 }
+
+#endif

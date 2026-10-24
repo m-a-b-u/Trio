@@ -1,3 +1,4 @@
+#if !targetEnvironment(macCatalyst)
 import AppIntents
 import Foundation
 import UIKit
@@ -28,3 +29,5 @@ import UIKit
         endBackgroundTaskSafely(&backgroundTaskID, taskName: "Restart Live Activity")
     }
 }
+
+#endif

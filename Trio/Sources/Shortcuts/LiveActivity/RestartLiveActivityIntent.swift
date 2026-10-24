@@ -1,3 +1,4 @@
+#if !targetEnvironment(macCatalyst)
 import AppIntents
 import Foundation
 
@@ -27,3 +28,5 @@ import Foundation
         return .result(value: String(localized: "Trio Live Activity restarted successfully."))
     }
 }
+
+#endif

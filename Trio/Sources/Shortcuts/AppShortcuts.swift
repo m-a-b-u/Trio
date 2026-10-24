@@ -66,6 +66,7 @@ struct AppShortcuts: AppShortcutsProvider {
             shortTitle: "Cancel Temp Target",
             systemImageName: "xmark.circle.fill"
         )
+        #if !targetEnvironment(macCatalyst)
         AppShortcut(
             intent: RestartLiveActivityIntent(),
             phrases: [
@@ -75,5 +76,6 @@ struct AppShortcuts: AppShortcutsProvider {
             shortTitle: "Restart Live Activity",
             systemImageName: "arrow.clockwise.circle.fill"
         )
+        #endif
     }
 }

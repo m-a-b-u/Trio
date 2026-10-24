@@ -5,6 +5,10 @@ struct UnitSelectionStepView: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 20) {
+            if MacDeviceOperationPolicy.isRestrictedBuild {
+                Text(MacDeviceOperationPolicy.title).font(.headline)
+                Text(MacDeviceOperationPolicy.explanation).font(.footnote)
+            }
             Text("Please choose from the options below.")
                 .font(.headline)
                 .padding(.horizontal)
@@ -43,8 +47,9 @@ struct UnitSelectionStepView: View {
             .background(Color.chart.opacity(0.65))
             .cornerRadius(10)
 
-            Text(
-                "Note: Choosing your pump model determines which increments for setting up your basal rates are available. You will pair your actual pump after finishing the onboarding process."
+            Text(MacDeviceOperationPolicy.isRestrictedBuild ?
+                "Der Simulator dient ausschließlich zum Kennenlernen der Oberfläche. Reale Geräte werden in diesem Mac-Port nicht gekoppelt." :
+                String(localized: "Note: Choosing your pump model determines which increments for setting up your basal rates are available. You will pair your actual pump after finishing the onboarding process.")
             )
             .padding(.horizontal)
             .font(.footnote)

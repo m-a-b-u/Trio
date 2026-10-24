@@ -13,6 +13,13 @@ extension CGMSettings {
         let pluginCGMManager: PluginManager
 
         func makeUIViewController(context _: UIViewControllerRepresentableContext<CGMSetupView>) -> UIViewController {
+            guard MacDeviceOperationPolicy.permitsGlucoseSource(CGMType.type.rawValue) else {
+                return UIHostingController(rootView: ContentUnavailableView(
+                    MacDeviceOperationPolicy.title,
+                    systemImage: "exclamationmark.shield",
+                    description: Text(MacDeviceOperationPolicy.explanation)
+                ))
+            }
             var setupViewController: SetupUIResult<
                 CGMManagerViewController,
                 CGMManagerUI

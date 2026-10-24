@@ -1,3 +1,4 @@
+#if !targetEnvironment(macCatalyst)
 //
 //  GarminDevice.swift
 //  Trio
@@ -22,3 +23,5 @@ struct GarminDevice: Codable, Equatable {
         IQDevice(id: id, modelName: modelName, friendlyName: friendlyName)
     }
 }
+
+#endif

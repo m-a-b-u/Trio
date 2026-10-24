@@ -26,14 +26,19 @@ final class ServiceAssembly: Assembly {
         container.register(UserNotificationsManager.self) { r in BaseUserNotificationsManager(resolver: r) }
         container.register(WatchManager.self) { r in BaseWatchManager(resolver: r) }
         container.register(BolusCalculationManager.self) { r in BaseBolusCalculationManager(resolver: r) }
-        container.register(GarminManager.self) { r in BaseGarminManager(resolver: r) }
+        #if !targetEnvironment(macCatalyst)
+            container.register(GarminManager.self) { r in BaseGarminManager(resolver: r) }
+        #endif
         container.register(ContactImageManager.self) { r in BaseContactImageManager(resolver: r) }
         container.register(AlertPermissionsChecker.self) { r in AlertPermissionsChecker(resolver: r) }
-        if #available(iOS 16.2, *) {
-            container.register(LiveActivityManager.self) { r in
-                LiveActivityManager(resolver: r)
+        #if !targetEnvironment(macCatalyst)
+            if #available(iOS 16.2, *) {
+                container.register(LiveActivityManager.self) { r in
+                    LiveActivityManager(resolver: r)
+                }
             }
-        }
+        #endif
+        container.register(WidgetSnapshotPublisher.self) { r in WidgetSnapshotPublisher(resolver: r) }
         container.register(IOBService.self) { r in BaseIOBService(resolver: r) }
         container.register(BolusSafetyValidator.self) { r in BaseBolusSafetyValidator(resolver: r) }
         container.register(AdjustmentManager.self) { r in BaseAdjustmentManager(resolver: r) }

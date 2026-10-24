@@ -1,3 +1,4 @@
+#if !targetEnvironment(macCatalyst)
 import CoreData
 import Foundation
 
@@ -169,3 +170,5 @@ extension LiveActivityManager {
         }
     }
 }
+
+#endif
