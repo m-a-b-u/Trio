@@ -1,0 +1,249 @@
+<!doctype html>
+<html lang="de">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="apple-mobile-web-app-title" content="Trio Coach">
+<title>Trio Coach</title>
+<style>
+  :root {
+    --bg: #f4f5f7; --card: #ffffff; --text: #16181d; --muted: #6b7280; --line: #e5e7eb;
+    --accent: #6d4aff; --good: #16a34a; --warn: #d97706; --bad: #dc2626; --low: #b91c1c; --high: #f59e0b; --band: rgba(109, 74, 255, .14);
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --bg: #0d0f14; --card: #171a21; --text: #eef0f4; --muted: #9aa3b2; --line: #2a2f3a;
+      --accent: #9b82ff; --band: rgba(155, 130, 255, .18);
+    }
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0; background: var(--bg); color: var(--text);
+    font: 15px/1.45 -apple-system, BlinkMacSystemFont, "SF Pro Text", system-ui, sans-serif;
+    padding: env(safe-area-inset-top) 16px calc(24px + env(safe-area-inset-bottom));
+  }
+  header { display: flex; align-items: center; justify-content: space-between; padding: 18px 0 10px; }
+  h1 { font-size: 26px; margin: 0; letter-spacing: -.02em; }
+  h2 { font-size: 13px; text-transform: uppercase; letter-spacing: .06em; color: var(--muted); margin: 22px 4px 8px; font-weight: 600; }
+  .card { background: var(--card); border-radius: 16px; padding: 14px 16px; margin-bottom: 10px; border: 1px solid var(--line); }
+  .row { display: flex; gap: 10px; }
+  .row > .card { flex: 1; text-align: center; margin: 0; }
+  .big { font-size: 30px; font-weight: 700; letter-spacing: -.02em; }
+  .muted { color: var(--muted); font-size: 13px; }
+  .pill { display: inline-block; padding: 2px 9px; border-radius: 999px; font-size: 12px; font-weight: 600; }
+  .pending { background: rgba(109, 74, 255, .15); color: var(--accent); }
+  .applied { background: rgba(22, 163, 74, .15); color: var(--good); }
+  .rejected, .cancelled, .blocked { background: rgba(107, 114, 128, .18); color: var(--muted); }
+  .failed { background: rgba(220, 38, 38, .15); color: var(--bad); }
+  .sev-warn { border-left: 4px solid var(--warn); }
+  .sev-critical { border-left: 4px solid var(--bad); }
+  .sev-info { border-left: 4px solid var(--accent); }
+  button {
+    background: var(--accent); color: #fff; border: 0; border-radius: 12px; padding: 12px 16px;
+    font: inherit; font-weight: 600; width: 100%;
+  }
+  button:disabled { opacity: .5; }
+  .tirbar { display: flex; height: 22px; border-radius: 8px; overflow: hidden; margin: 8px 0 6px; }
+  .tirbar div { height: 100%; }
+  .legend { display: flex; flex-wrap: wrap; gap: 4px 12px; font-size: 12px; color: var(--muted); }
+  .legend i { display: inline-block; width: 9px; height: 9px; border-radius: 3px; margin-right: 4px; vertical-align: middle; }
+  table { width: 100%; border-collapse: collapse; font-size: 13px; }
+  th, td { text-align: right; padding: 6px 4px; border-bottom: 1px solid var(--line); }
+  th:first-child, td:first-child { text-align: left; }
+  th { color: var(--muted); font-weight: 600; }
+  .summary p { margin: 0 0 8px; }
+  .diff { font-family: ui-monospace, Menlo, monospace; font-size: 12px; color: var(--muted); margin-top: 6px; white-space: pre-wrap; }
+  svg text { fill: var(--muted); font-size: 10px; }
+  .err { color: var(--bad); }
+  .tabs { display: flex; gap: 6px; margin: 6px 0 4px; }
+  .tabs button { background: var(--card); color: var(--text); border: 1px solid var(--line); padding: 8px; font-size: 13px; }
+  .tabs button.on { background: var(--accent); color: #fff; border-color: var(--accent); }
+</style>
+</head>
+<body>
+<header>
+  <h1>Trio Coach</h1>
+  <span class="muted" id="sync"></span>
+</header>
+
+<div class="row" id="now"></div>
+
+<h2>Tagesbericht</h2>
+<div id="report"></div>
+
+<h2>Vorschläge</h2>
+<div id="proposals"></div>
+
+<h2>Zeit im Zielbereich</h2>
+<div class="tabs" id="periodTabs"></div>
+<div class="card" id="tir"></div>
+
+<h2>Tagesprofil (Median, 10–90 %)</h2>
+<div class="card"><div id="agp"></div><div class="muted" id="agpNote"></div></div>
+
+<h2>Mahlzeiten</h2>
+<div class="card" id="meals"></div>
+
+<h2>Letzte Tage</h2>
+<div class="card" style="overflow-x:auto"><table id="daily"></table></div>
+
+<h2>Analyse</h2>
+<div class="card">
+  <div class="muted" id="analysisInfo" style="margin-bottom:10px"></div>
+  <button id="run">Analyse jetzt starten</button>
+</div>
+<p class="muted" style="text-align:center;margin-top:18px">Vorschläge werden erst nach deiner Freigabe mit Face ID in Trio übernommen.</p>
+
+<script>
+const $ = (id) => document.getElementById(id)
+const esc = (s) => String(s ?? '').replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]))
+const fmt = (v, unit = '') => (v === null || v === undefined ? '–' : v + unit)
+const statusLabel = { pending: 'wartet auf Freigabe', applied: 'übernommen', rejected: 'abgelehnt', failed: 'fehlgeschlagen', cancelled: 'zurückgezogen', blocked: 'blockiert' }
+const targetLabel = { settings: 'Trio-Einstellungen', preferences: 'Algorithmus', basal_profile: 'Basalrate', isf: 'ISF', carb_ratios: 'KH-Faktor', bg_targets: 'Zielbereich' }
+let stats = null
+let period = 'last7d'
+
+function ago(iso) {
+  if (!iso) return 'nie'
+  const m = Math.round((Date.now() - Date.parse(iso)) / 60000)
+  return m < 1 ? 'gerade eben' : m < 60 ? `vor ${m} min` : m < 1440 ? `vor ${Math.round(m / 60)} h` : `vor ${Math.round(m / 1440)} d`
+}
+
+function markdown(text) {
+  return esc(text).split(/\n{2,}/).map((p) => '<p>' + p.replace(/\*\*(.+?)\*\*/g, '<b>$1</b>').replace(/\n/g, '<br>') + '</p>').join('')
+}
+
+function proposalDiff(p) {
+  if (p.patch) return Object.entries(p.patch).map(([k, v]) => `${k} → ${JSON.stringify(v)}`).join('\n')
+  if (p.schedule) return p.schedule.map((e) => `${e.time}  ${e.value ?? ''}${e.low ? e.low + '–' + (e.high ?? e.low) : ''}`).join('\n')
+  return ''
+}
+
+function renderOverview(o) {
+  const s = o.state?.status || {}
+  $('sync').textContent = 'Trio ' + ago(o.stateReceivedAt)
+  $('now').innerHTML = [
+    ['Glukose', s.glucose ? `${s.glucose}` : '–', s.trend || ''],
+    ['IOB', s.iob !== undefined ? (+s.iob).toFixed(2) : '–', 'IE'],
+    ['COB', s.cob !== undefined ? Math.round(s.cob) : '–', 'g']
+  ].map(([l, v, u]) => `<div class="card"><div class="muted">${l}</div><div class="big">${esc(v)}</div><div class="muted">${esc(u)}</div></div>`).join('')
+
+  const r = o.latestReport
+  if (!r) {
+    $('report').innerHTML = `<div class="card muted">Noch kein Bericht. ${o.analysis.hasKey ? 'Der erste Bericht kommt zur eingestellten Uhrzeit – oder starte ihn unten.' : 'Am Mac zuerst <code>node trio-mcp.mjs set-api-key</code> ausführen.'}</div>`
+  } else {
+    const findings = (r.findings || []).map((f) => `<div class="card sev-${esc(f.severity)}"><b>${esc(f.title)}</b><div>${esc(f.detail)}</div></div>`).join('')
+    const highlights = (r.highlights || []).length ? '<ul style="margin:6px 0 0;padding-left:18px">' + r.highlights.map((h) => `<li>${esc(h)}</li>`).join('') + '</ul>' : ''
+    $('report').innerHTML = `<div class="card summary"><div class="muted" style="margin-bottom:6px">${new Date(r.createdAt).toLocaleString('de-AT', { dateStyle: 'medium', timeStyle: 'short' })} · ${esc(r.model || '')}</div>${markdown(r.summary)}${highlights}</div>${findings}`
+  }
+
+  const list = o.proposals || []
+  $('proposals').innerHTML = list.length
+    ? list.slice(0, 12).map((p) => `<div class="card">
+        <div style="display:flex;justify-content:space-between;gap:8px;align-items:center">
+          <b>${esc(targetLabel[p.target] || p.target)}</b><span class="pill ${esc(p.status)}">${esc(statusLabel[p.status] || p.status)}</span>
+        </div>
+        <div style="margin-top:6px">${esc(p.reason)}</div>
+        <div class="diff">${esc(proposalDiff(p))}</div>
+        ${p.resultMessage ? `<div class="muted" style="margin-top:6px">${esc(p.resultMessage)}</div>` : ''}
+        <div class="muted" style="margin-top:4px">${p.origin === 'daily-analysis' ? 'Tagesanalyse' : 'Claude-Chat'} · ${ago(p.createdAt)}</div>
+      </div>`).join('')
+    : '<div class="card muted">Keine Vorschläge.</div>'
+
+  const a = o.analysis
+  $('analysisInfo').innerHTML = `Täglich um <b>${esc(a.time)}</b> · Modell ${esc(a.model)} · ${a.hasKey ? 'API-Key hinterlegt' : '<span class="err">kein API-Key</span>'}${a.lastError ? `<br><span class="err">Letzter Fehler: ${esc(a.lastError)}</span>` : ''}`
+  $('run').disabled = !a.hasKey || a.running
+  $('run').textContent = a.running ? 'Analyse läuft …' : 'Analyse jetzt starten'
+}
+
+function renderTir() {
+  const labels = { last24h: '24 h', last7d: '7 T', last14d: '14 T', overall30d: '30 T' }
+  $('periodTabs').innerHTML = Object.entries(labels).map(([k, l]) => `<button class="${k === period ? 'on' : ''}" data-p="${k}">${l}</button>`).join('')
+  $('periodTabs').querySelectorAll('button').forEach((b) => (b.onclick = () => { period = b.dataset.p; renderTir() }))
+  const g = stats?.[period]
+  if (!g || !g.n) { $('tir').innerHTML = '<span class="muted">Noch keine Verlaufsdaten von Trio.</span>'; return }
+  const below54 = g.below54 || 0
+  const parts = [
+    [below54, 'var(--low)', '< 54'],
+    [(g.below70 || 0) - below54, 'var(--bad)', '54–69'],
+    [g.tir || 0, 'var(--good)', '70–180'],
+    [(g.above180 || 0) - (g.above250 || 0), 'var(--high)', '181–250'],
+    [g.above250 || 0, 'var(--warn)', '> 250']
+  ]
+  $('tir').innerHTML = `
+    <div style="display:flex;justify-content:space-between;align-items:baseline">
+      <div><span class="big">${fmt(g.tir, ' %')}</span> <span class="muted">im Ziel</span></div>
+      <div class="muted">Ø ${fmt(g.mean)} mg/dL · CV ${fmt(g.cv, ' %')} · GMI ${fmt(g.gmi, ' %')}</div>
+    </div>
+    <div class="tirbar">${parts.map(([v, c]) => `<div style="width:${Math.max(0, v)}%;background:${c}"></div>`).join('')}</div>
+    <div class="legend">${parts.map(([v, c, l]) => `<span><i style="background:${c}"></i>${l}: ${Math.round(Math.max(0, v) * 10) / 10} %</span>`).join('')}</div>
+    <div class="muted" style="margin-top:6px">Eng (70–140): ${fmt(g.tightRange, ' %')} · ${g.n} Werte</div>`
+}
+
+function renderAgp() {
+  const h = stats?.hourly || []
+  if (!h.some((x) => x.n)) { $('agp').innerHTML = '<span class="muted">Noch keine Daten.</span>'; return }
+  const W = 340, H = 180, padL = 30, padB = 18, maxY = 300
+  const x = (hr) => padL + (hr / 23) * (W - padL - 6)
+  const y = (v) => H - padB - (Math.min(v, maxY) / maxY) * (H - padB - 6)
+  const pts = h.filter((p) => p.n)
+  const band = pts.map((p) => `${x(p.hour)},${y(p.p90)}`).join(' ') + ' ' + [...pts].reverse().map((p) => `${x(p.hour)},${y(p.p10)}`).join(' ')
+  const iqr = pts.map((p) => `${x(p.hour)},${y(p.p75)}`).join(' ') + ' ' + [...pts].reverse().map((p) => `${x(p.hour)},${y(p.p25)}`).join(' ')
+  const line = pts.map((p) => `${x(p.hour)},${y(p.median)}`).join(' ')
+  const grid = [70, 180, 250].map((v) => `<line x1="${padL}" x2="${W - 6}" y1="${y(v)}" y2="${y(v)}" stroke="${v === 70 ? 'var(--bad)' : v === 180 ? 'var(--high)' : 'var(--line)'}" stroke-dasharray="3 3"/><text x="2" y="${y(v) + 3}">${v}</text>`).join('')
+  const hours = [0, 6, 12, 18, 23].map((hr) => `<text x="${x(hr) - 6}" y="${H - 4}">${hr}h</text>`).join('')
+  const hypo = pts.filter((p) => p.hypoEvents).map((p) => `<circle cx="${x(p.hour)}" cy="${y(60)}" r="${Math.min(6, 2 + p.hypoEvents)}" fill="var(--bad)" opacity=".8"/>`).join('')
+  $('agp').innerHTML = `<svg viewBox="0 0 ${W} ${H}" width="100%" role="img" aria-label="Glukose-Tagesprofil">
+    ${grid}<polygon points="${band}" fill="var(--band)"/><polygon points="${iqr}" fill="var(--band)"/>
+    <polyline points="${line}" fill="none" stroke="var(--accent)" stroke-width="2.5" stroke-linejoin="round"/>${hypo}${hours}</svg>`
+  const worstHigh = [...pts].sort((a, b) => (b.median || 0) - (a.median || 0))[0]
+  const worstLow = [...pts].sort((a, b) => (b.below70 || 0) - (a.below70 || 0))[0]
+  $('agpNote').textContent = `Höchster Median um ${worstHigh.hour} Uhr (${worstHigh.median} mg/dL)` + (worstLow.below70 ? ` · meiste Unterzuckerungen um ${worstLow.hour} Uhr (${worstLow.below70} %)` : '') + ` · ${stats.coveredDays} Tage Daten`
+}
+
+function renderMeals() {
+  const m = stats?.meals
+  const names = { breakfast: 'Frühstück', lunch: 'Mittagessen', dinner: 'Abendessen', other: 'Sonstige' }
+  if (!m) { $('meals').innerHTML = '<span class="muted">Noch keine Daten.</span>'; return }
+  $('meals').innerHTML = `<table><tr><th></th><th>n</th><th>Ø KH</th><th>Anstieg</th><th>Δ 3 h</th><th>Hypo</th></tr>${Object.entries(m).map(([k, v]) =>
+    `<tr><td>${names[k]}</td><td>${v.n}</td><td>${fmt(v.avgCarbs, ' g')}</td><td>${fmt(v.avgPeakRise)}</td><td>${fmt(v.avgDelta3h)}</td><td>${v.lowsWithin3h}</td></tr>`).join('')}</table>`
+}
+
+function renderDaily() {
+  const d = (stats?.daily || []).slice(-14).reverse()
+  $('daily').innerHTML = `<tr><th>Tag</th><th>TIR</th><th>&lt;70</th><th>Ø</th><th>KH</th><th>TDD</th></tr>` + d.map((x) =>
+    `<tr><td>${new Date(x.date).toLocaleDateString('de-AT', { weekday: 'short', day: '2-digit', month: '2-digit' })}</td><td>${fmt(x.tir, '%')}</td><td>${fmt(x.below70, '%')}</td><td>${fmt(x.mean)}</td><td>${fmt(x.carbs)}</td><td>${fmt(x.tdd)}</td></tr>`).join('')
+}
+
+async function load() {
+  try {
+    const [o, s] = await Promise.all([fetch('/api/overview').then((r) => r.json()), fetch('/api/stats').then((r) => r.json())])
+    stats = s
+    renderOverview(o)
+    renderTir(); renderAgp(); renderMeals(); renderDaily()
+  } catch (e) {
+    $('report').innerHTML = `<div class="card err">Server nicht erreichbar: ${esc(e.message)}</div>`
+  }
+}
+
+$('run').onclick = async () => {
+  $('run').disabled = true
+  $('run').textContent = 'Analyse läuft … (ca. 1 min)'
+  try {
+    const r = await fetch('/api/analyze', { method: 'POST' })
+    const body = await r.json()
+    if (!r.ok) throw new Error(body.error || r.status)
+  } catch (e) {
+    $('analysisInfo').innerHTML += `<br><span class="err">Analyse fehlgeschlagen: ${esc(e.message)}</span>`
+  }
+  load()
+}
+
+if (location.search.includes('token=')) history.replaceState(null, '', '/app')
+load()
+setInterval(load, 60000)
+</script>
+</body>
+</html>
