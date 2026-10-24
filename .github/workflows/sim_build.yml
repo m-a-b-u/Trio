@@ -32,7 +32,10 @@ jobs:
       - name: Capture submodule state for cache key
         run: git submodule status --recursive | awk '{print $1, $2}' > .submodule-status
 
-      - name: Test Claude relay with synthetic data
+      - name: Install relay dependencies
+        run: npm ci --prefix tools/trio-mcp --ignore-scripts --no-audit --no-fund
+
+      - name: Test AI relay with synthetic data
         run: node --test tools/trio-mcp/*.test.mjs
 
       - name: Restore DerivedData
@@ -67,7 +70,7 @@ jobs:
             PROVISIONING_PROFILE_SPECIFIER="" \
             | tee xcodebuild.log
 
-      - name: Test Claude proposal diff
+      - name: Test AI providers, settings catalog and proposal diff
         run: |
           set -o pipefail
           xcodebuild test \
@@ -75,6 +78,9 @@ jobs:
             -scheme "Trio Tests" \
             -destination "platform=iOS Simulator,name=iPhone 17,OS=26.2" \
             -only-testing:TrioTests/ClaudeBridgeDiffTests \
+            -only-testing:TrioTests/AIMealProviderTests \
+            -only-testing:TrioTests/ClaudeSettingsCatalogTests \
+            -only-testing:TrioTests/AIAdditionalSettingsTests \
             -resultBundlePath "$RUNNER_TEMP/claude-bridge-tests.xcresult" \
             -parallel-testing-enabled NO \
             -skipPackagePluginValidation \
@@ -88,13 +94,14 @@ jobs:
             PROVISIONING_PROFILE_SPECIFIER="" \
             2>&1 | tee -a xcodebuild.log
 
-      - name: Verify all three Claude diff tests ran
+      - name: Verify selected AI tests ran
         run: |
           set -o pipefail
           xcrun xcresulttool get test-results summary \
             --path "$RUNNER_TEMP/claude-bridge-tests.xcresult" \
             | tee "$RUNNER_TEMP/claude-bridge-tests.json"
-          jq -e '.totalTestCount == 3 and .passedTests == 3 and .failedTests == 0 and .skippedTests == 0' \
+          minimum_tests=$(python3 -c 'from pathlib import Path; print(sum(Path("TrioTests/" + name + ".swift").read_text().count("@Test(") for name in ["ClaudeBridgeDiffTests", "AIMealProviderTests", "ClaudeSettingsCatalogTests", "AIAdditionalSettingsTests"]))')
+          jq -e --argjson minimum "$minimum_tests" '.totalTestCount >= $minimum and .passedTests == .totalTestCount and .failedTests == 0 and .skippedTests == 0' \
             "$RUNNER_TEMP/claude-bridge-tests.json"
 
       - name: Upload Claude diff test results
@@ -111,11 +118,11 @@ jobs:
         if: failure()
         run: |
           grep -nE "error:|Undefined symbol|PhaseScriptExecution failed|BUILD FAILED" xcodebuild.log | tail -n 80 || true
-          { echo '## ❌ Build failed'; echo '```'; grep -E "error:" xcodebuild.log | head -n 40; echo '```'; } >> $GITHUB_STEP_SUMMARY
+          { echo '## ❌ Build failed'; echo '```'; grep -E "error:" xcodebuild.log | head -n 40; echo '```'; } >> "$GITHUB_STEP_SUMMARY"
 
       - name: Success summary
         if: success()
-        run: echo "✅ Trio builds for iOS Simulator; Claude relay and proposal diff tests passed" >> $GITHUB_STEP_SUMMARY
+        run: echo "✅ Trio builds for iOS Simulator; AI relay, provider, settings and diff tests passed" >> "$GITHUB_STEP_SUMMARY"
 
       - name: Upload build log
         if: failure()

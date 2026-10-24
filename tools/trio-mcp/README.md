@@ -1,93 +1,179 @@
 # trio-mcp
 
-Verbindet **Claude** (Claude Desktop, Claude Code, Cowork) per MCP mit **Trio** auf dem iPhone.
+Verbindet **MCP-fähige KI-Assistenten** mit **Trio** auf dem iPhone. Mahlzeitfotos und Tagesanalysen
+unterstützen **Anthropic**, **OpenAI** und **OpenAI-kompatible APIs**.
 
 ```
-Claude ──MCP (stdio)──▶ trio-mcp mcp ──▶ trio-mcp serve (Relay, Port 8765) ◀──WLAN── Trio (iPhone)
+KI-Assistent ──MCP (stdio)──▶ trio-mcp mcp ──▶ trio-mcp serve ◀──WLAN── Trio
+                                                   │
+                                     gewählter Analyseanbieter
 ```
 
-**Sicherheitsmodell:** Claude kann Trios Einstellungen und Status lesen und Änderungen **vorschlagen**. In Trio
-wird jeder Vorschlag erst nach Prüfung des Vorher/Nachher-Diffs und Freigabe mit **Face ID** übernommen.
-Ablehnungen und Fehler werden an Claude zurückgemeldet.
+**Freigabe:** Die KI liest den synchronisierten Stand und erstellt Vorschläge. Jede Änderung wird in Trio
+mit Vorher/Nachher-Diff angezeigt und erst nach lokaler Authentifizierung (Face ID oder Gerätecode)
+übernommen. Es gibt kein MCP-Tool zum direkten Anwenden oder zur Bolusabgabe.
 
 ## Einrichtung am Mac
 
 ```bash
-cd ~/Developer/Trio/tools/trio-mcp     # Pfad deines Trio-Klons
+cd ~/Developer/Trio/tools/trio-mcp
 npm install
-node trio-mcp.mjs install-launchd      # Relay startet automatisch bei Anmeldung
-node trio-mcp.mjs info                 # zeigt Server-URL + Token für Trio
+node trio-mcp.mjs install-launchd
+node trio-mcp.mjs info                 # Server-URL + Token für Trio, Companion-Link
 ```
 
-Ohne launchd: `node trio-mcp.mjs serve` in einem Terminal laufen lassen.
+Ohne launchd: `node trio-mcp.mjs serve`. In Trio unter **Einstellungen → KI → KI-Bridge (MCP)**
+URL und Token eintragen und verbinden. iPhone und Mac brauchen eine direkte Netzwerkverbindung,
+z. B. WLAN oder VPN; iOS muss den Zugriff auf das lokale Netzwerk erlauben.
 
-## In Trio
+## Anbieter für Tagesanalysen wählen
 
-Einstellungen → **Claude-Bridge (MCP)** → Server-URL + Token eintragen → „Claude-Bridge aktiv“ einschalten.
-iPhone und Mac müssen im selben Netz sein (oder per Tailscale/VPN verbunden). Beim ersten Verbinden fragt iOS
-nach „Lokales Netzwerk“ – erlauben.
+Anbieter und Zugangsdaten am Mac sind unabhängig von der Konfiguration für Mahlzeitfotos am iPhone.
+Bestehende Anthropic-Schlüssel und Modellwerte bleiben beim Upgrade erhalten. Ein Anbieterwechsel
+übernimmt keine fremden Schlüssel oder Modellnamen. Es gibt keinen automatischen Anbieter-Fallback.
 
-## In Claude Desktop
+```bash
+# Anthropic
+node trio-mcp.mjs set-provider anthropic
+node trio-mcp.mjs set-model DEINE_ANTHROPIC_MODELL_ID
+node trio-mcp.mjs set-api-key
 
-`~/Library/Application Support/Claude/claude_desktop_config.json`:
+# OpenAI (Responses API; eigenen API-Key und Modell-ID verwenden)
+node trio-mcp.mjs set-provider openai
+node trio-mcp.mjs set-model DEINE_OPENAI_MODELL_ID
+node trio-mcp.mjs set-api-key
+
+# OpenAI-kompatibler Anbieter, Gateway oder lokaler Server (Chat Completions)
+node trio-mcp.mjs set-provider openai-compatible
+node trio-mcp.mjs set-base-url https://dein-anbieter.example/v1
+node trio-mcp.mjs set-model DEINE_MODELL_ID
+node trio-mcp.mjs set-api-key           # entfällt bei einem Endpunkt ohne Authentifizierung
+
+node trio-mcp.mjs provider-status     # Konfigurationsstatus ohne Schlüssel
+node trio-mcp.mjs set-time 07:00
+node trio-mcp.mjs analyze
+```
+
+`set-api-key` fragt den Schlüssel lokal ab; keinen Schlüssel als Kommandozeilenargument verwenden.
+Die Konfiguration liegt mit Dateirechten 0600 unter `~/.trio-mcp/config.json`. Eigene Endpunkte brauchen
+HTTPS; HTTP ist nur auf Loopback erlaubt. Die Basis-URL endet üblicherweise auf `/v1`, nicht auf
+`/chat/completions`. Schlüssel eigener Endpunkte sind an die vollständige normalisierte Basis-URL
+gebunden. Bei deren Änderung entfernt die CLI den alten Schlüssel. HTTP-Weiterleitungen werden abgewiesen.
+
+OpenAI und eigene Endpunkte haben absichtlich keine vorgewählte Modell-ID. Für Tagesanalysen muss das
+gewählte Modell Function Calling mit dem jeweiligen API-Format unterstützen. „OpenAI-kompatibel“
+bezeichnet hier Chat Completions mit `tools`, erzwungenem `tool_choice` und JSON-Funktionsargumenten;
+reine Text- oder Embedding-Endpunkte reichen nicht. OpenAI selbst nutzt die Responses API.
+
+Der bisherige Anthropic-Standard `claude-sonnet-4-5` bleibt für bestehende Konfigurationen erhalten;
+Anthropic kündigt seine Abschaltung für den 30. November 2026 an. Ein verfügbares Modell explizit
+konfigurieren ([Anthropic-Abkündigungen](https://platform.claude.com/docs/en/about-claude/model-deprecations)).
+
+## Mahlzeitfotos
+
+In Trio: **Einstellungen → KI → KI-Anbieter für Mahlzeitfotos**. Anbieter, Modell-ID, gegebenenfalls
+Basis-URL und API-Key speichern. Schlüssel liegen im iPhone-Schlüsselbund, getrennt nach Anbieter und
+bei eigenen APIs nach Endpunkt. Das Modell muss Bilder verstehen. Ein Endpunkt ohne Authentifizierung
+kann bei „OpenAI-kompatibel“ ohne Schlüssel verwendet werden.
+
+Im Behandlungsdialog **Mahlzeit per Foto schätzen (KI)** wählen. Nur das ausgewählte Foto und der
+optionale Hinweis werden an diesen Anbieter gesendet. Die zurückgegebenen Nährwerte bleiben editierbar
+und füllen erst nach Übernahme das normale Trio-Formular vor; dadurch wird nichts automatisch dosiert.
+
+## MCP-Client
+
+Der MCP-Server ist anbieterunabhängig. Jeder Client mit lokalem MCP-stdio-Support kann ihn starten.
+Beispiel für Claude Desktop (`~/Library/Application Support/Claude/claude_desktop_config.json`):
 
 ```json
 {
   "mcpServers": {
     "trio": {
-      "command": "node",
+      "command": "/opt/homebrew/bin/node",
       "args": ["/Users/DEINNAME/Developer/Trio/tools/trio-mcp/trio-mcp.mjs", "mcp"]
     }
   }
 }
 ```
 
-Falls Claude Desktop `node` nicht findet: statt `"node"` den vollen Pfad aus `which node` eintragen
-(z.B. `/opt/homebrew/bin/node`). Claude Desktop neu starten. Für Claude Code: `claude mcp add trio -- node /Pfad/zu/trio-mcp.mjs mcp`.
+Den Node-Pfad gegebenenfalls anpassen und den Client neu starten. Die Auswahl des MCP-Clients legt
+nicht den Anbieter der automatischen Tagesanalyse fest. Ein OpenAI-API-Key verbindet auch nicht
+automatisch die ChatGPT-Web-App mit einem lokalen stdio-Server.
 
-## Tägliche Analyse & Companion-Web-App
+## Einstellungen entdecken und ändern
 
-Trio lädt zusätzlich den Verlauf der letzten **30 Tage** hoch (Glukose, Boli/SMB, KH, Temp-Basal,
-Loop-Entscheidungen, TDD). Der Mac berechnet daraus Statistiken (TIR, CV, GMI, Tagesprofil, Mahlzeiten,
-Hypos) und lässt **täglich** Claude einen Bericht mit Änderungsvorschlägen erstellen.
+Zuerst `trio_get_settings_catalog` aufrufen. Der Katalog kommt vom aktuellen iPhone-Snapshot und enthält
+für jeden Eintrag `target`, `key`, `type`, `current`, `constraints` und `access`. Dadurch sieht der
+Assistent auch zusätzliche Einstellungsbereiche, Arrays und Objekte statt nur skalare Algorithmuswerte.
 
-```bash
-node trio-mcp.mjs set-api-key        # Anthropic-API-Key eingeben (bleibt nur am Mac, ~/.trio-mcp/config.json)
-node trio-mcp.mjs set-time 07:00     # Uhrzeit der Tagesanalyse
-node trio-mcp.mjs analyze            # sofort ausführen
-node trio-mcp.mjs info               # zeigt auch den Link zur Web-App
-```
+- `proposal`: über `trio_propose_settings_change` änderbar; anschließend auf dem iPhone prüfen und freigeben.
+- `action`: der angegebene lokale Bedien- oder Autorisierungsschritt ist erforderlich.
+- Zeitpläne: über `trio_propose_schedule` als vollständigen Tagesplan übertragen.
 
-`analyze` benötigt das laufende Relay. CLI, MCP, Web-App und Scheduler teilen dadurch dieselbe
-Analyse-Sperre; parallele iPhone-Synchronisierungen und Freigaben bleiben während der Analyse erhalten.
+Zentrale Trio- und oref-Einstellungen, Pumpenlimits, Alarme, App-Optionen, KI-Mahlzeitkonfiguration,
+Bridge- und Nightscout-Verbindung, Diagnosedaten-Freigabe, CGM-Simulator und Vorlagen für Mahlzeiten,
+Overrides und temporäre Ziele werden über ihre jeweiligen Speicher- und Validierungswege verarbeitet.
+Aktive Therapievorlagen bleiben unverändert; Vorlagen werden hier ausschließlich verwaltet, nicht aktiviert.
+Die vorhandenen Typen, Wertebereiche und benötigten Folgeaktionen werden auf dem iPhone erneut geprüft.
+Zugangsschlüssel werden nie als aktuelle Werte exportiert. Systemberechtigungen, Anmeldung und
+Gerätekopplung bleiben lokale Schritte; der Katalog kennzeichnet sie ausdrücklich. Auch herstellerinterne
+Pumpen-/CGM-Einstellungen ohne öffentliche Schreibschnittstelle (insbesondere LibreTransmitter) sind
+lokale Aktionen. Diese Optionen sind derzeit **nicht** per KI beschreibbar; dafür wäre ein validierter
+Adapter im jeweiligen Herstellermodul nötig.
 
-**Web-App:** `http://<Mac-IP>:8765/app?token=<Token>` am iPhone in Safari öffnen → Teilen → „Zum Home-Bildschirm“.
-Zeigt Status, Tagesbericht, Vorschläge (mit Status), Zeit im Zielbereich, Tagesprofil, Mahlzeiten und Tagesverlauf.
+Die Mac-Analyseeinstellungen stehen im Ziel `relay_config` (`provider`, `model`, `baseURL`, `analysisTime`).
+Auch sie werden erst nach iPhone-Freigabe gespeichert. Bei einem gleichzeitigen Konfigurationswechsel
+wird ein veralteter Vorschlag abgewiesen. Bei Anbieterwechsel gegebenenfalls Modell und Basis-URL im
+selben Vorschlag angeben. API-Schlüssel am Mac lokal eingeben.
 
-**Leitplanken der Tagesanalyse:** Vorschläge nur bei Mustern an ≥ 3 Tagen und ≥ 7 Tagen Daten, max. 2 Therapie-
-Vorschläge pro Tag, Basal/ISF/KH-Faktor max. ±10 % pro Schritt (der Server blockiert hart alles über ±20 % bzw.
-Einstellungen über ±30 %, beide Zielbereichsgrenzen werden geprüft), Hypos haben Vorrang. Fehlende Vergleichspläne
-und Änderungen ausgehend von 0 werden blockiert. Mindestens 7 Tage Verlauf mit Messwerten an 7 verschiedenen Tagen
-und höchstens 2 neu erstellte automatische Vorschläge pro Kalendertag werden serverseitig erzwungen; auch
-abgelehnte oder zurückgezogene Vorschläge zählen zum Tageslimit. Die medizinischen Musterregeln bleiben Vorgaben
-an Claude und ersetzen keine persönliche Prüfung. Ältere offene Vorschläge der Tagesanalyse werden beim nächsten Lauf
-zurückgezogen. Jede Änderung braucht weiterhin deine Face-ID-Freigabe in Trio.
+Nach lokaler Authentifizierung reserviert das iPhone einen Vorschlag auf dem Relay (`applying`).
+Ab dann können ein paralleler Chat oder ein erneuter Tageslauf ihn nicht mehr zurückziehen. Die App
+prüft die Vorschau nochmals vor dem Anwenden. Wird die App dabei beendet oder ist die Rückmeldung
+unterbrochen, bleibt das Ergebnis bewusst unbestätigt; es wird keine möglicherweise bereits erfolgte
+Pumpenaktion automatisch wiederholt. Den tatsächlichen Zustand am iPhone prüfen.
 
-## Lokale Tests
+## Tagesanalyse und Companion-Web-App
 
-`npm test` prüft Relay und Analyse mit synthetischen Daten und einer lokalen API-Attrappe. Es werden keine
-echten Schlüssel oder Gesundheitsdaten benötigt und keine installierten Relay-Daten verändert.
+Trio lädt bis zu **30 Tage Verlauf** zum Relay: Glukose, Insulin, KH, Loop-Entscheidungen und TDD.
+Der Mac berechnet Statistiken und sendet diese zusammen mit Einstellungen und bisherigen Entscheidungen
+zur konfigurierten Analyse-API. Der Anbieter wird im Bericht gespeichert.
+
+`analyze` benötigt das laufende Relay. CLI, MCP, Web-App und Scheduler teilen dieselbe Analyse-Sperre;
+parallele Synchronisierungen und iPhone-Entscheidungen bleiben während der Analyse erhalten.
+
+Die Web-App ist unter dem von `info` ausgegebenen Link erreichbar. Auf dem iPhone in Safari öffnen
+und bei Bedarf zum Home-Bildschirm hinzufügen. Sie zeigt Berichte, Konfigurationsstatus, Vorschläge,
+Glukose-Statistiken und Verlauf.
+
+Automatische Vorschläge benötigen mindestens sieben Tage Verlauf mit Messwerten an sieben verschiedenen
+Tagen. Höchstens zwei neu erstellte automatische Vorschläge pro Kalendertag; Ablehnung oder Rücknahme
+setzen das Kontingent nicht zurück. Der Server blockiert Zeitplanänderungen über ±20 % und numerische
+Einstellungsänderungen über ±30 %; beide Zielgrenzen werden geprüft. Fehlende Vergleichspläne und
+Änderungen ausgehend von null werden blockiert. Der Prompt verlangt zusätzlich wiederkehrende Muster,
+kleinere Schritte und Vorrang für Hypoglykämien. Diese medizinischen Promptregeln ersetzen keine
+persönliche Prüfung. Ein erneuter Lauf zieht offene automatische Vorschläge zurück und kann wegen
+des Tageslimits keinen Ersatz erstellen.
 
 ## Tools
 
 | Tool | Zweck |
 |---|---|
-| `trio_get_status` | Glukose, Trend, IOB, COB, letzter Loop |
-| `trio_get_settings` | settings, preferences (oref), basal_profile, isf, carb_ratios, bg_targets, pump |
-| `trio_propose_settings_change` | Schlüssel in settings/preferences ändern (Vorschlag) |
-| `trio_propose_schedule` | 24h-Zeitplan ersetzen: Basal (U/h), ISF (mg/dL/IE), KH-Faktor (g/IE), Ziele (mg/dL) |
-| `trio_get_history_stats` | 30-Tage-Statistik: TIR, Tagesprofil, Mahlzeiten, Hypos, TDD |
-| `trio_get_daily_report` / `trio_run_daily_analysis` | Tagesbericht lesen / Analyse starten |
-| `trio_list_proposals` / `trio_get_proposal` / `trio_cancel_proposal` | Vorschläge verfolgen |
+| `trio_get_status` | Letzter synchronisierter Zustand mit Alter |
+| `trio_get_settings_catalog` | Einstellungsbereiche, Werte, Typen, Grenzen und Schreibwege |
+| `trio_get_settings` | Einen Katalogbereich oder alle Einstellungen lesen |
+| `trio_propose_settings_change` | Skalare oder verschachtelte Einstellungen zur Freigabe vorschlagen |
+| `trio_propose_schedule` | Basal, ISF, KH-Faktor oder BG-Zielplan vorschlagen |
+| `trio_get_history_stats` | Bis zu 30 Tage Statistiken |
+| `trio_get_daily_report` / `trio_run_daily_analysis` | Bericht lesen / Analyse starten |
+| `trio_list_proposals` / `trio_get_proposal` / `trio_cancel_proposal` | Vorschläge verfolgen oder zurückziehen |
 
-Daten liegen in `~/.trio-mcp/` (`config.json` mit Token/API-Key, `db.json` mit Snapshot, Vorschlägen und Berichten, `history.json` mit dem 30-Tage-Verlauf).
+## Tests und API-Referenzen
+
+`npm test` prüft Relay, Konfiguration, Katalog und die drei API-Formate ausschließlich mit synthetischen
+Daten und lokalen API-Attrappen. Installierte Relay-Daten, echte Zugangsdaten und reale Therapieeinstellungen
+werden dafür nicht verwendet. Die Simulator-CI kompiliert die App und führt die Swift-Provider-,
+Katalog- und Diff-Tests aus. Echte Modellqualität und die Freigabe an einem physischen iPhone brauchen
+separate Abnahme.
+
+Requestformate: [OpenAI Bilder](https://developers.openai.com/api/docs/guides/images-vision),
+[OpenAI Function Calling](https://developers.openai.com/api/docs/guides/function-calling).

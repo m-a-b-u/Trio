@@ -23,7 +23,7 @@ async function listen(server) {
   return server.address().port
 }
 
-async function fixture(t, response, { scheduled = false } = {}) {
+async function fixture(t, response, { scheduled = false, configuration = {}, provider = 'anthropic' } = {}) {
   const dir = await fs.mkdtemp(path.join(os.tmpdir(), 'trio-relay-test-'))
   const mock = http.createServer(response || ((req, res) => {
     res.writeHead(500); res.end('{}')
@@ -33,9 +33,10 @@ async function fixture(t, response, { scheduled = false } = {}) {
   const relayPort = await listen(reserve)
   await new Promise(resolve => reserve.close(resolve))
   await fs.writeFile(path.join(dir, 'config.json'), JSON.stringify({
-    token, port: relayPort, anthropicApiKey: 'synthetic-key', analysisTime: scheduled ? '00:00' : '23:59', model: 'synthetic-model'
+    token, port: relayPort, anthropicApiKey: 'synthetic-key', analysisTime: scheduled ? '00:00' : '23:59', model: 'synthetic-model', ...configuration
   }))
-  const env = { ...process.env, TRIO_MCP_DIR: dir, TRIO_MCP_ANTHROPIC_URL: `http://127.0.0.1:${mockPort}` }
+  const override = provider === 'openai' ? 'TRIO_MCP_OPENAI_URL' : provider === 'openai-compatible' ? 'TRIO_MCP_COMPATIBLE_URL' : 'TRIO_MCP_ANTHROPIC_URL'
+  const env = { ...process.env, TRIO_MCP_DIR: dir, [override]: `http://127.0.0.1:${mockPort}` }
   const args = scheduled ? ['--import', 'data:text/javascript,const original = globalThis.setInterval; globalThis.setInterval = fn => original(fn, 20)', script, 'serve'] : [script, 'serve']
   const child = spawn(process.execPath, args, {
     env,
@@ -253,4 +254,115 @@ test('automatic analysis creates at most two proposals per day, including repeat
   assert.equal(second.status, 200)
   assert.equal(second.body.proposals.filter(p => p.status === 'pending').length, 0)
   assert.equal((await request('/api/proposals')).body.filter(p => p.origin === 'daily-analysis').length, 2)
+})
+
+for (const provider of ['openai', 'openai-compatible']) {
+  test(`${provider} runs through the relay and reports the configured provider without keys`, async t => {
+    const baseURL = 'https://synthetic.invalid/v1'
+    const { request } = await fixture(t, (req, res) => {
+      const result = { summary: 'Synthetic provider report', findings: [], proposals: [] }
+      res.setHeader('Content-Type', 'application/json')
+      res.end(JSON.stringify(provider === 'openai' ? {
+        status: 'completed', output: [{ type: 'function_call', name: 'submit_analysis', arguments: JSON.stringify(result) }]
+      } : { choices: [{ finish_reason: 'tool_calls', message: { tool_calls: [{ type: 'function', function: { name: 'submit_analysis', arguments: JSON.stringify(result) } }] } }] }))
+    }, { provider, configuration: { provider, providers: { [provider]: { model: 'synthetic-model', apiKey: 'synthetic-provider-key', ...(provider === 'openai-compatible' ? { baseURL, apiKeyBaseURL: baseURL } : {}) } } } })
+    await request('/trio/state', state())
+    const report = await request('/api/analyze', {})
+    assert.equal(report.status, 200)
+    assert.equal(report.body.provider, provider)
+    const overview = await request('/api/overview')
+    assert.equal(overview.body.analysis.ready, true)
+    assert.equal(overview.body.analysis.provider, provider)
+    assert.ok(!JSON.stringify(overview.body).includes('synthetic-provider-key'))
+  })
+}
+
+test('CLI provider settings remain isolated and endpoint changes invalidate the custom key', async t => {
+  const { dir, env } = await fixture(t)
+  const run = (...args) => spawnSync(process.execPath, [script, ...args], { env, encoding: 'utf8' })
+  assert.equal(run('set-provider', 'openai').status, 0)
+  assert.equal(run('set-model', 'synthetic-gpt').status, 0)
+  let config = JSON.parse(await fs.readFile(path.join(dir, 'config.json')))
+  assert.equal(config.model, 'synthetic-model')
+  assert.equal(config.providers.openai.model, 'synthetic-gpt')
+  assert.equal(JSON.parse(run('provider-status').stdout).hasKey, false)
+  assert.equal(run('set-provider', 'openai-compatible').status, 0)
+  assert.equal(run('set-base-url', 'https://first.invalid/v1').status, 0)
+  config = JSON.parse(await fs.readFile(path.join(dir, 'config.json')))
+  Object.assign(config.providers['openai-compatible'], { apiKey: 'synthetic-custom', apiKeyBaseURL: 'https://first.invalid/v1' })
+  await fs.writeFile(path.join(dir, 'config.json'), JSON.stringify(config))
+  assert.equal(run('set-base-url', 'https://second.invalid/v1').status, 0)
+  config = JSON.parse(await fs.readFile(path.join(dir, 'config.json')))
+  assert.equal(config.providers['openai-compatible'].apiKey, undefined)
+  assert.notEqual(run('set-base-url', 'http://untrusted.invalid/v1').status, 0)
+})
+
+test('relay setting changes wait for iPhone approval and reject stale approvals', async t => {
+  const { request, env } = await fixture(t)
+  await request('/trio/state', { ...state(), settingsCatalog: [] })
+  const catalog = (await request('/api/state')).body.state.settingsCatalog
+  assert.equal(catalog.find(row => row.target === 'relay_config' && row.key === 'model').access, 'proposal')
+  const proposal = (await request('/api/proposals', { target: 'relay_config', patch: { model: 'new-synthetic-model' }, reason: 'Synthetic config test' })).body
+  assert.equal((await request('/api/overview')).body.analysis.model, 'synthetic-model')
+  assert.equal((await request(`/trio/proposals/${proposal.id}/result`, { status: 'applied' })).status, 200)
+  assert.equal((await request('/api/overview')).body.analysis.model, 'new-synthetic-model')
+  assert.equal((await request(`/trio/proposals/${proposal.id}/result`, { status: 'applied' })).status, 200)
+  const stale = (await request('/api/proposals', { target: 'relay_config', patch: { model: 'stale-model' }, reason: 'Synthetic stale test' })).body
+  assert.equal(spawnSync(process.execPath, [script, 'set-time', '06:00'], { env }).status, 0)
+  assert.equal((await request(`/trio/proposals/${stale.id}/result`, { status: 'applied' })).status, 409)
+  assert.equal((await request('/api/overview')).body.analysis.model, 'new-synthetic-model')
+  assert.equal((await request('/api/proposals')).body.find(p => p.id === stale.id).status, 'failed')
+})
+
+test('provider-switch proposal previews its effective saved model and endpoint', async t => {
+  const { request } = await fixture(t, undefined, { configuration: { providers: { openai: { model: 'synthetic-gpt' } } } })
+  await request('/trio/state', { ...state(), settingsCatalog: [] })
+  const response = await request('/api/proposals', { target: 'relay_config', patch: { provider: 'openai' }, reason: 'Synthetic provider switch' })
+  assert.equal(response.status, 200)
+  assert.deepEqual(response.body.patch, { provider: 'openai', model: 'synthetic-gpt', baseURL: 'https://api.openai.com/v1' })
+  assert.equal(response.body.oldValues.model, 'synthetic-model')
+})
+
+test('MCP advertises provider-neutral catalog tools and preserves nested settings proposals', async t => {
+  const { Client } = await import('@modelcontextprotocol/sdk/client/index.js')
+  const { StdioClientTransport } = await import('@modelcontextprotocol/sdk/client/stdio.js')
+  const { request, env } = await fixture(t)
+  await request('/trio/state', { ...state(), settingsCatalog: [
+    { target: 'glucose_alerts', key: 'alerts', type: 'array', current: [], access: 'proposal', constraints: {} },
+    { target: 'ai_meal', key: 'apiKey', type: 'string', access: 'action', reason: 'Local entry' }
+  ] })
+  const transport = new StdioClientTransport({ command: process.execPath, args: [script, 'mcp'], env })
+  const client = new Client({ name: 'synthetic-trio-test', version: '1.0.0' })
+  await client.connect(transport)
+  t.after(() => client.close())
+  const toolNames = (await client.listTools()).tools.map(tool => tool.name)
+  assert.equal(toolNames.length, 11)
+  assert.ok(toolNames.includes('trio_get_settings_catalog'))
+  const catalog = await client.callTool({ name: 'trio_get_settings_catalog', arguments: {} })
+  assert.equal(catalog.isError, undefined)
+  assert.ok(JSON.parse(catalog.content[0].text).catalog.some(row => row.target === 'relay_config'))
+  const result = await client.callTool({ name: 'trio_propose_settings_change', arguments: {
+    target: 'glucose_alerts', changes: { alerts: [{ name: 'Synthetic', enabled: true }] }, reason: 'Synthetic nested proposal'
+  } })
+  assert.equal(result.isError, undefined)
+  assert.deepEqual(JSON.parse(result.content[0].text).proposal.patch.alerts, [{ name: 'Synthetic', enabled: true }])
+  const denied = await client.callTool({ name: 'trio_propose_settings_change', arguments: {
+    target: 'ai_meal', changes: { apiKey: 'not-a-secret' }, reason: 'Synthetic rejected action'
+  } })
+  assert.equal(denied.isError, true)
+})
+
+test('iPhone approval reservation excludes concurrent cancellation and duplicate application', async t => {
+  const { request } = await fixture(t)
+  await request('/trio/state', state())
+  const proposal = (await request('/api/proposals', { target: 'preferences', patch: { maxIOB: 2.1 }, reason: 'Synthetic approval reservation' })).body
+  assert.equal((await request(`/trio/proposals/${proposal.id}/claim`, {})).status, 200)
+  assert.equal((await request(`/api/proposals/${proposal.id}/cancel`, {})).status, 409)
+  assert.equal((await request(`/trio/proposals/${proposal.id}/claim`, {})).status, 409)
+  assert.equal((await request('/trio/proposals?status=pending')).body.length, 0)
+  assert.equal((await request('/api/proposals?status=applying')).body.length, 1)
+  assert.equal((await request(`/trio/proposals/${proposal.id}/result`, { status: 'applied' })).status, 200)
+  const cancelled = (await request('/api/proposals', { target: 'preferences', patch: { maxIOB: 2.1 }, reason: 'Synthetic cancelled proposal' })).body
+  assert.equal((await request(`/api/proposals/${cancelled.id}/cancel`, {})).status, 200)
+  assert.equal((await request(`/trio/proposals/${cancelled.id}/claim`, {})).status, 409)
 })

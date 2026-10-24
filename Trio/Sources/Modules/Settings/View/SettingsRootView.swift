@@ -280,9 +280,12 @@ extension Settings {
                     )
                     .listRowBackground(Color.chart)
 
-                    Section(header: Text("Claude")) {
+                    Section(header: Text("KI")) {
+                        NavigationLink(destination: AIMealSettingsView()) {
+                            Label("KI-Anbieter für Mahlzeitfotos", systemImage: "camera.viewfinder")
+                        }
                         NavigationLink(destination: ClaudeBridgeView()) {
-                            Label("Claude-Bridge (MCP)", systemImage: "sparkles")
+                            Label("KI-Bridge (MCP)", systemImage: "sparkles")
                         }
                     }
                     .listRowBackground(Color.chart)

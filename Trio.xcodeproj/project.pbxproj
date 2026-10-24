@@ -80,7 +80,11 @@
 		3811DE3F25C9D4A100A708ED /* SettingsStateModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = 3811DE3925C9D4A100A708ED /* SettingsStateModel.swift */; };
 		3811DE4125C9D4A100A708ED /* SettingsRootView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 3811DE3C25C9D4A100A708ED /* SettingsRootView.swift */; };
 		AA1C1A0D2EB0000400C1A0D1 /* ClaudeBridgeView.swift in Sources */ = {isa = PBXBuildFile; fileRef = AA1C1A0D2EB0000300C1A0D1 /* ClaudeBridgeView.swift */; };
+		AA1C1A0D2EB0000C00C1A0D1 /* AIAdditionalSettings.swift in Sources */ = {isa = PBXBuildFile; fileRef = AA1C1A0D2EB0000B00C1A0D1 /* AIAdditionalSettings.swift */; };
 		AA1C1A0D2EB0000600C1A0D1 /* ClaudeBridgeDiffTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = AA1C1A0D2EB0000500C1A0D1 /* ClaudeBridgeDiffTests.swift */; };
+		AA1C1A0D2EB0000E00C1A0D1 /* AIAdditionalSettingsTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = AA1C1A0D2EB0000D00C1A0D1 /* AIAdditionalSettingsTests.swift */; };
+		AA1C1A0D2EB0000A00C1A0D1 /* ClaudeSettingsCatalogTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = AA1C1A0D2EB0000900C1A0D1 /* ClaudeSettingsCatalogTests.swift */; };
+		AA1C1A0D2EB0000800C1A0D1 /* AIMealProviderTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = AA1C1A0D2EB0000700C1A0D1 /* AIMealProviderTests.swift */; };
 		3811DE4225C9D4A100A708ED /* SettingsDataFlow.swift in Sources */ = {isa = PBXBuildFile; fileRef = 3811DE3D25C9D4A100A708ED /* SettingsDataFlow.swift */; };
 		3811DE4325C9D4A100A708ED /* SettingsProvider.swift in Sources */ = {isa = PBXBuildFile; fileRef = 3811DE3E25C9D4A100A708ED /* SettingsProvider.swift */; };
 		3811DE5C25C9D4D500A708ED /* Formatters.swift in Sources */ = {isa = PBXBuildFile; fileRef = 3811DE5425C9D4D500A708ED /* Formatters.swift */; };
@@ -1181,7 +1185,11 @@
 		3811DE3925C9D4A100A708ED /* SettingsStateModel.swift */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.swift; path = SettingsStateModel.swift; sourceTree = "<group>"; };
 		3811DE3C25C9D4A100A708ED /* SettingsRootView.swift */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.swift; path = SettingsRootView.swift; sourceTree = "<group>"; };
 		AA1C1A0D2EB0000300C1A0D1 /* ClaudeBridgeView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ClaudeBridgeView.swift; sourceTree = "<group>"; };
+		AA1C1A0D2EB0000B00C1A0D1 /* AIAdditionalSettings.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AIAdditionalSettings.swift; sourceTree = "<group>"; };
 		AA1C1A0D2EB0000500C1A0D1 /* ClaudeBridgeDiffTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ClaudeBridgeDiffTests.swift; sourceTree = "<group>"; };
+		AA1C1A0D2EB0000D00C1A0D1 /* AIAdditionalSettingsTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AIAdditionalSettingsTests.swift; sourceTree = "<group>"; };
+		AA1C1A0D2EB0000900C1A0D1 /* ClaudeSettingsCatalogTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ClaudeSettingsCatalogTests.swift; sourceTree = "<group>"; };
+		AA1C1A0D2EB0000700C1A0D1 /* AIMealProviderTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AIMealProviderTests.swift; sourceTree = "<group>"; };
 		3811DE3D25C9D4A100A708ED /* SettingsDataFlow.swift */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.swift; path = SettingsDataFlow.swift; sourceTree = "<group>"; };
 		3811DE3E25C9D4A100A708ED /* SettingsProvider.swift */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.swift; path = SettingsProvider.swift; sourceTree = "<group>"; };
 		3811DE5425C9D4D500A708ED /* Formatters.swift */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.swift; path = Formatters.swift; sourceTree = "<group>"; };
@@ -2575,6 +2583,7 @@
 				DD1745112C54168300211FAC /* Subviews */,
 				3811DE3C25C9D4A100A708ED /* SettingsRootView.swift */,
 				AA1C1A0D2EB0000300C1A0D1 /* ClaudeBridgeView.swift */,
+				AA1C1A0D2EB0000B00C1A0D1 /* AIAdditionalSettings.swift */,
 				CE1F6DE82BAF37C90064EB8D /* TidepoolConfigView.swift */,
 				65070A322BFDCB83006F213F /* TidepoolStartView.swift */,
 			);
@@ -3243,6 +3252,9 @@
 				3B5CD2C72D4AECD500CE213C /* OpenAPSSwiftTests */,
 				B3919BBB515547118D684CA2 /* SettingsSearchTests.swift */,
 				AA1C1A0D2EB0000500C1A0D1 /* ClaudeBridgeDiffTests.swift */,
+				AA1C1A0D2EB0000D00C1A0D1 /* AIAdditionalSettingsTests.swift */,
+				AA1C1A0D2EB0000900C1A0D1 /* ClaudeSettingsCatalogTests.swift */,
+				AA1C1A0D2EB0000700C1A0D1 /* AIMealProviderTests.swift */,
 				B3919BBB515547118D684CF2 /* AlgorithmSuggestedBolusTests.swift */,
 				B3919BBB515547118D684CE2 /* DosingModeClampTests.swift */,
 				B3919BBB515547118D684CD2 /* LoopIndicatorTests.swift */,
@@ -5314,6 +5326,7 @@
 				CEE9A6572BBB418300EB5194 /* CalibrationsChart.swift in Sources */,
 				3811DE4125C9D4A100A708ED /* SettingsRootView.swift in Sources */,
 				AA1C1A0D2EB0000400C1A0D1 /* ClaudeBridgeView.swift in Sources */,
+				AA1C1A0D2EB0000C00C1A0D1 /* AIAdditionalSettings.swift in Sources */,
 				38192E04261B82FA0094D973 /* ReachabilityManager.swift in Sources */,
 				38E44539274E411700EC9A94 /* Disk+UIImage.swift in Sources */,
 				3BAD36CC2D7D420E00CC298D /* CoreDataInitializationCoordinator.swift in Sources */,
@@ -6058,6 +6071,9 @@
 				BD8FC05E2D6618CE00B95AED /* BolusCalculatorTests.swift in Sources */,
 				41740E936552456AAC0EDAC3 /* SettingsSearchTests.swift in Sources */,
 				AA1C1A0D2EB0000600C1A0D1 /* ClaudeBridgeDiffTests.swift in Sources */,
+				AA1C1A0D2EB0000E00C1A0D1 /* AIAdditionalSettingsTests.swift in Sources */,
+				AA1C1A0D2EB0000A00C1A0D1 /* ClaudeSettingsCatalogTests.swift in Sources */,
+				AA1C1A0D2EB0000800C1A0D1 /* AIMealProviderTests.swift in Sources */,
 				B015AFF52E600000000D7351 /* AdjustmentManagerTests.swift in Sources */,
 				41740E936552456AAC0EDFC3 /* AlgorithmSuggestedBolusTests.swift in Sources */,
 				41740E936552456AAC0EDEC3 /* DosingModeClampTests.swift in Sources */,

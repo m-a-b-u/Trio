@@ -1,7 +1,7 @@
 {
   "name": "trio-mcp",
   "version": "0.1.0",
-  "description": "MCP relay between Claude and the Trio iOS app. Claude can read and propose; changes require Face ID approval in Trio.",
+  "description": "Provider-independent MCP relay for Trio. AI assistants can read settings and propose locally approved changes.",
   "type": "module",
   "bin": {
     "trio-mcp": "trio-mcp.mjs"

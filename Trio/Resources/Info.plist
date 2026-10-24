@@ -65,9 +65,9 @@
 	<key>NSAlarmKitUsageDescription</key>
 	<string>Trio uses alarms so urgent glucose and pump alerts can reach you even when your phone is silenced or a Focus is on.</string>
 	<key>NSCameraUsageDescription</key>
-	<string>The camera is used to photograph meals so Claude can estimate carbs, fat and protein.</string>
+	<string>The camera is used to photograph meals so your selected AI provider can estimate carbs, fat and protein.</string>
 	<key>NSLocalNetworkUsageDescription</key>
-	<string>Trio connects to your trio-mcp server on the local network so Claude can read settings and propose changes for your approval.</string>
+	<string>Trio connects to your trio-mcp server on the local network so AI assistants can read settings and propose changes for your approval.</string>
 	<key>NFCReaderUsageDescription</key>
 	<string>NFC is used to scan Libre sensors.</string>
 	<key>NSAppTransportSecurity</key>

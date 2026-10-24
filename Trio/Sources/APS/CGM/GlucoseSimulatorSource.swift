@@ -385,7 +385,7 @@ class OscillatingGenerator: BloodGlucoseGenerator {
 
     /// Amplitude of random noise to add to the values (±5 mg/dL)
     private var noiseAmplitude: Double {
-        get { UserDefaults.standard.double(forKey: UserDefaultsKeys.noiseAmplitude) != 0 ?
+        get { UserDefaults.standard.object(forKey: UserDefaultsKeys.noiseAmplitude) != nil ?
             UserDefaults.standard.double(forKey: UserDefaultsKeys.noiseAmplitude) :
             Defaults.noiseAmplitude }
         set { UserDefaults.standard.set(newValue, forKey: UserDefaultsKeys.noiseAmplitude) }

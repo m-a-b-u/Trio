@@ -91,6 +91,7 @@ struct ClaudeProposal: Codable, Identifiable, Equatable {
     let schedule: [[String: ClaudeJSONValue]]?
     let reason: String?
     let status: String?
+    var oldValues: [String: ClaudeJSONValue]? = nil
 }
 
 struct ClaudeDiffLine: Identifiable, Equatable {
@@ -119,10 +120,11 @@ enum ClaudeBridgeError: LocalizedError {
     case noPump
     case unsupportedBasalRate(Double)
     case authenticationFailed
+    case invalidSetting(String)
 
     var errorDescription: String? {
         switch self {
-        case .notConfigured: return "Claude-Bridge ist nicht konfiguriert (URL/Token fehlen)."
+        case .notConfigured: return "KI-Bridge ist nicht konfiguriert (URL/Token fehlen)."
         case .badURL: return "Ungültige Server-URL."
         case let .http(code, body): return "Server-Fehler \(code): \(body.prefix(200))"
         case let .unknownTarget(target): return "Unbekanntes Ziel: \(target)"
@@ -132,6 +134,7 @@ enum ClaudeBridgeError: LocalizedError {
         case .noPump: return "Keine Pumpe verbunden – Basalrate kann nicht übertragen werden."
         case let .unsupportedBasalRate(rate): return "Basalrate \(rate) U/h wird von der Pumpe nicht unterstützt."
         case .authenticationFailed: return "Authentifizierung fehlgeschlagen."
+        case let .invalidSetting(message): return "Ungültige Einstellung: \(message)"
         }
     }
 }
@@ -190,7 +193,7 @@ enum ClaudeBridgeConfig {
 
 // MARK: - Helpers
 
-private func claudeJSONString(_ value: Any?) -> String {
+func claudeJSONString(_ value: Any?) -> String {
     guard let value, !(value is NSNull) else { return "–" }
     if let data = try? JSONSerialization.data(withJSONObject: [value], options: [.sortedKeys]),
        var string = String(data: data, encoding: .utf8), string.count >= 2
@@ -202,23 +205,236 @@ private func claudeJSONString(_ value: Any?) -> String {
     return "\(value)"
 }
 
-private func claudeValuesEqual(_ lhs: Any?, _ rhs: Any?) -> Bool {
+func claudeValuesEqual(_ lhs: Any?, _ rhs: Any?) -> Bool {
     if let left = lhs as? NSNumber, let right = rhs as? NSNumber {
+        guard (CFGetTypeID(left) == CFBooleanGetTypeID()) == (CFGetTypeID(right) == CFBooleanGetTypeID()) else { return false }
         return abs(left.doubleValue - right.doubleValue) < 1e-9
     }
     return claudeJSONString(lhs) == claudeJSONString(rhs)
 }
 
-private func claudeDictionary<T: Encodable>(_ value: T) throws -> [String: Any] {
+func claudeDictionary<T: Encodable>(_ value: T) throws -> [String: Any] {
     let data = try JSONCoding.encoder.encode(value)
     return (try JSONSerialization.jsonObject(with: data) as? [String: Any]) ?? [:]
 }
 
-private func claudeJSONObject<T: Encodable>(_ value: T) -> Any {
+func claudeJSONObject<T: Encodable>(_ value: T) -> Any {
     guard let data = try? JSONCoding.encoder.encode(value),
           let object = try? JSONSerialization.jsonObject(with: data, options: [.fragmentsAllowed])
     else { return NSNull() }
     return object
+}
+
+func claudeChangesMatch(_ preview: [ClaudeDiffLine], _ current: [ClaudeDiffLine]) -> Bool {
+    preview.count == current.count && zip(preview, current).allSatisfy {
+        $0.key == $1.key && $0.old == $1.old && $0.new == $1.new
+    }
+}
+
+// The catalog and proposal validator use the same constraints as the native pickers.
+func claudeSettingConstraints(target: String, key: String) -> [String: Any] {
+    let aliases = [
+        "max_iob": "maxIOB", "max_daily_safety_multiplier": "maxDailySafetyMultiplier",
+        "current_basal_safety_multiplier": "currentBasalSafetyMultiplier", "autosens_max": "autosensMax",
+        "autosens_min": "autosensMin", "smb_delivery_ratio": "smbDeliveryRatio",
+        "half_basal_exercise_target": "halfBasalExerciseTarget", "min_5m_carbimpact": "min5mCarbimpact",
+        "SMBInterval": "smbInterval", "bolus_increment": "bolusIncrement",
+        "maxDelta_bg_threshold": "maxDeltaBGthreshold", "insulin_action_curve": "dia"
+    ]
+    let pickerKey = aliases[key] ?? key
+    if ["settings", "preferences", "pump_settings"].contains(target),
+       let picker = Mirror(reflecting: DecimalPickerSettings()).children
+        .first(where: { $0.label == pickerKey })?.value as? PickerSetting
+    {
+        return ["minimum": NSDecimalNumber(decimal: picker.min), "maximum": NSDecimalNumber(decimal: picker.max),
+                "step": NSDecimalNumber(decimal: picker.step)]
+    }
+    if target == "settings" {
+        switch key {
+        case "localGlucosePort": return ["minimum": 1, "maximum": 65535, "integer": true]
+        case "insulinConcentration": return ["exclusiveMinimum": 0, "note": "Legacy stored value; unused by current UI/algorithm"]
+        case "units": return ["enum": GlucoseUnits.allCases.map(\.rawValue)]
+        case "dosingMode": return ["enum": DosingMode.userSelectable.map(\.rawValue), "requires": "configured CGM and pump"]
+        case "cgm": return ["enum": CGMType.allCases.map(\.rawValue)]
+        case "eA1cDisplayUnit": return ["enum": EstimatedA1cDisplayUnit.allCases.map(\.rawValue)]
+        case "glucoseColorScheme": return ["enum": GlucoseColorScheme.allCases.map(\.rawValue)]
+        case "bolusDisplayThreshold": return ["enum": BolusDisplayThreshold.allCases.map { NSDecimalNumber(decimal: $0.rawValue) }]
+        case "forecastDisplayType": return ["enum": ForecastDisplayType.allCases.map(\.rawValue)]
+        case "lockScreenView", "smartStackView": return ["enum": LockScreenView.allCases.map(\.rawValue)]
+        case "bolusShortcut": return ["enum": BolusShortcutLimit.allCases.map(\.rawValue)]
+        case "timeInRangeType": return ["enum": TimeInRangeType.allCases.map(\.rawValue)]
+        case "homeStatsPanelFace": return ["enum": HomeStatsPanelFace.allCases.map(\.rawValue)]
+        case "garminWatchface": return ["enum": GarminWatchface.allCases.map(\.rawValue)]
+        case "garminDatafield": return ["enum": GarminDatafield.allCases.map(\.rawValue)]
+        case "primaryAttributeChoice": return ["enum": GarminPrimaryAttributeChoice.allCases.map(\.rawValue)]
+        case "secondaryAttributeChoice": return ["enum": GarminSecondaryAttributeChoice.allCases.map(\.rawValue)]
+        default: break
+        }
+    }
+    if target == "glucose_alerts", key == "configuration" {
+        return ["properties": ["dayStart": ["hour": "integer 0...23", "minute": "integer 0...59"],
+                               "nightStart": ["hour": "integer 0...23", "minute": "integer 0...59"],
+                               "forceTrioAlertsWhenCGMProvidesOwn": ["type": "boolean"]]]
+    }
+    if target == "glucose_alerts", key == "alerts" {
+        return ["items": ["id": "UUID", "type": GlucoseAlertType.allCases.map(\.rawValue), "name": "nonempty string",
+                          "isEnabled": "boolean; urgentLow must remain true", "thresholdMgDL": "urgentLow 54...80; low/forecastedLow 54...100; high 100...400; carbsRequired 5...50 grams",
+                          "soundFilename": AlarmSoundCatalog.allFilenames, "playsSound": "boolean", "overridesSilenceAndDND": "boolean",
+                          "activeOption": ["always", "day", "night"], "snoozedUntil": "runtime state; preserve existing value"],
+                "collection": "At least one alert per type; unique IDs and nonoverlapping activeOption per type."]
+    }
+    if target == "device_alerts", key == "configs" {
+        return ["items": ["id": "UUID", "severity": DeviceAlertSeverity.allCases.map(\.rawValue),
+                          "isEnabled": "boolean; critical must remain true", "soundFilename": AlarmSoundCatalog.allFilenames,
+                          "playsSound": "boolean", "overridesSilenceAndDND": "boolean", "activeOption": ["always", "day", "night"]],
+                "collection": "Each severity requires an always baseline; unique IDs and activeOption per severity."]
+    }
+    if target == "app_preferences", key == "liveActivityOrder" {
+        return ["length": 4, "items": ["", "currentGlucoseLarge", "currentGlucose", "iob", "cob", "updatedLabel", "totalDailyDose"]]
+    }
+    if target == "preferences", key == "curve" { return ["enum": InsulinCurve.allCases.map(\.rawValue)] }
+    if target == "app_preferences", key == "colorSchemePreference" { return ["enum": ColorSchemeOption.allCases.map(\.rawValue)] }
+    if ["ai_meal", "relay_config"].contains(target), key == "provider" {
+        return ["enum": ["anthropic", "openai", "openai-compatible"]]
+    }
+    return [:]
+}
+
+func claudeSettingType(_ value: Any) -> String {
+    if let number = value as? NSNumber { return CFGetTypeID(number) == CFBooleanGetTypeID() ? "boolean" : "number" }
+    if value is String { return "string" }
+    if value is [Any] { return "array" }
+    if value is [String: Any] { return "object" }
+    return "null"
+}
+
+func claudeValidateSettingPatch(_ patch: [String: ClaudeJSONValue], current: [String: Any], target: String) throws {
+    guard !patch.isEmpty else { throw ClaudeBridgeError.emptyPatch }
+    for (key, proposed) in patch {
+        guard let old = current[key], claudeSettingType(old) == claudeSettingType(proposed.anyValue) else {
+            throw ClaudeBridgeError.notApplied(key)
+        }
+        let rules = claudeSettingConstraints(target: target, key: key)
+        if let allowed = rules["enum"] as? [Any], !allowed.contains(where: { claudeValuesEqual($0, proposed.anyValue) }) {
+            throw ClaudeBridgeError.notApplied(key)
+        }
+        if let number = proposed.doubleValue, claudeSettingType(proposed.anyValue) == "number" {
+            guard number.isFinite else { throw ClaudeBridgeError.notApplied(key) }
+            if let min = rules["minimum"] as? NSNumber, number < min.doubleValue { throw ClaudeBridgeError.notApplied(key) }
+            if let max = rules["maximum"] as? NSNumber, number > max.doubleValue { throw ClaudeBridgeError.notApplied(key) }
+            if let min = rules["exclusiveMinimum"] as? NSNumber, number <= min.doubleValue { throw ClaudeBridgeError.notApplied(key) }
+            if rules["integer"] as? Bool == true, number.rounded() != number { throw ClaudeBridgeError.notApplied(key) }
+            if let step = rules["step"] as? NSNumber, !claudeValuesEqual(old, proposed.anyValue) {
+                let origin = (rules["minimum"] as? NSNumber)?.doubleValue ?? 0
+                let count = (number - origin) / step.doubleValue
+                guard step.doubleValue > 0, abs(count - count.rounded()) < 0.000001 else {
+                    throw ClaudeBridgeError.notApplied(key)
+                }
+            }
+        }
+    }
+}
+
+func claudeCatalogRows(target: String, values: [String: Any]) -> [[String: Any]] {
+    values.keys.sorted().map { key in
+        var row: [String: Any] = ["target": target, "key": key, "type": claudeSettingType(values[key]!),
+                                 "current": values[key]!, "access": "proposal",
+                                 "constraints": claudeSettingConstraints(target: target, key: key)]
+        if target == "settings", key == "cgmPluginIdentifier" {
+            row["access"] = "action"
+            row["reason"] = "CGM plugin identity is assigned by the native pairing/onboarding flow."
+        }
+        return row
+    }
+}
+
+private struct ClaudeGlucoseAlertSettings: Codable {
+    var configuration: GlucoseAlertConfiguration
+    var alerts: [GlucoseAlert]
+}
+
+private struct ClaudeDeviceAlertSettings: Codable {
+    var configs: [DeviceAlertSeverityConfig]
+}
+
+private struct ClaudeAppPreferences: Codable {
+    var colorSchemePreference: ColorSchemeOption
+    var calendarID: String
+    var liveActivityOrder: [String]
+    var isTrioRemoteControlEnabled: Bool
+}
+
+private struct ClaudeAIMealPreferences: Codable {
+    var provider: String
+    var anthropicModel: String
+    var openAIModel: String
+    var openAICompatibleModel: String
+    var customBaseURL: String
+}
+
+private struct ClaudeBridgePreferences: Codable {
+    var enabled: Bool
+    var baseURL: String
+}
+
+func claudeValidateEndpoint(_ string: String, allowLocalHTTP: Bool = true) throws -> URL {
+    guard let components = URLComponents(string: string), let url = components.url,
+          let host = components.host, !host.isEmpty, components.user == nil, components.password == nil,
+          components.query == nil, components.fragment == nil,
+          components.scheme == "https" || (allowLocalHTTP && components.scheme == "http" &&
+              ["localhost", "127.0.0.1", "::1", "[::1]"].contains(host.lowercased()))
+    else { throw ClaudeBridgeError.invalidSetting("HTTPS-URL ohne Zugangsdaten, Query oder Fragment erforderlich") }
+    return url
+}
+
+func claudeValidateGlucoseAlerts(_ alerts: [GlucoseAlert], configuration: GlucoseAlertConfiguration) throws {
+    for time in [configuration.dayStart, configuration.nightStart] {
+        guard (0 ... 23).contains(time.hour), (0 ... 59).contains(time.minute) else {
+            throw ClaudeBridgeError.invalidSetting("Alarmzeit außerhalb 00:00–23:59")
+        }
+    }
+    guard Set(alerts.map(\.id)).count == alerts.count else { throw ClaudeBridgeError.invalidSetting("Doppelte Alarm-ID") }
+    for type in GlucoseAlertType.allCases {
+        let entries = alerts.filter { $0.type == type }
+        guard !entries.isEmpty else { throw ClaudeBridgeError.invalidSetting("Mindestens ein Alarm je Typ erforderlich") }
+        let windows = entries.map(\.activeOption)
+        guard Set(windows).count == windows.count, !(windows.contains(.always) && windows.count > 1) else {
+            throw ClaudeBridgeError.invalidSetting("Überlappende Alarm-Zeitfenster")
+        }
+    }
+    for alert in alerts {
+        let range: ClosedRange<Decimal>
+        switch alert.type {
+        case .urgentLow: range = 54 ... 80
+        case .low, .forecastedLow: range = 54 ... 100
+        case .high: range = 100 ... 400
+        case .carbsRequired: range = 5 ... 50
+        }
+        guard range.contains(alert.thresholdMgDL), alert.type != .urgentLow || alert.isEnabled else {
+            throw ClaudeBridgeError.invalidSetting("Alarmgrenze oder Pflichtalarm ungültig")
+        }
+        guard !alert.name.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
+              AlarmSoundCatalog.allFilenames.contains(alert.soundFilename) else {
+            throw ClaudeBridgeError.invalidSetting("Alarmname oder Sounddatei ungültig")
+        }
+    }
+}
+
+func claudeValidateDeviceAlerts(_ configs: [DeviceAlertSeverityConfig]) throws {
+    guard Set(configs.map(\.id)).count == configs.count else { throw ClaudeBridgeError.invalidSetting("Doppelte Alarm-ID") }
+    for severity in DeviceAlertSeverity.allCases {
+        let entries = configs.filter { $0.severity == severity }
+        guard entries.contains(where: { $0.activeOption == .always }),
+              Set(entries.map(\.activeOption)).count == entries.count else {
+            throw ClaudeBridgeError.invalidSetting("Eine Basis-Konfiguration und eindeutige Zeitfenster je Schweregrad erforderlich")
+        }
+    }
+    for config in configs {
+        guard config.severity != .critical || config.isEnabled,
+              AlarmSoundCatalog.allFilenames.contains(config.soundFilename) else {
+            throw ClaudeBridgeError.invalidSetting("Kritischer Alarm darf nicht deaktiviert werden; Sounddatei muss lokal sein")
+        }
+    }
 }
 
 private func claudeDecimal(_ value: Double, places: Int = 3) -> Decimal {
@@ -233,23 +449,29 @@ private func claudeTimeLabel(_ minutes: Int) -> String {
     String(format: "%02d:%02d", minutes / 60, minutes % 60)
 }
 
-private struct ClaudeScheduleItem {
+struct ClaudeScheduleItem {
     let minutes: Int
     let fields: [String: ClaudeJSONValue]
 }
 
-private func claudeParseSchedule(_ raw: [[String: ClaudeJSONValue]]?) throws -> [ClaudeScheduleItem] {
+func claudeParseSchedule(_ raw: [[String: ClaudeJSONValue]]?) throws -> [ClaudeScheduleItem] {
     guard let raw, !raw.isEmpty else { throw ClaudeBridgeError.invalidSchedule("leer") }
     var items: [ClaudeScheduleItem] = []
     for entry in raw {
         let minutes: Int
         if let time = entry["time"]?.stringValue ?? entry["start"]?.stringValue {
-            let parts = time.split(separator: ":").compactMap { Int($0) }
-            guard parts.count >= 2, (0 ..< 24).contains(parts[0]), (0 ..< 60).contains(parts[1]) else {
+            let parts = time.split(separator: ":", omittingEmptySubsequences: false).map(String.init)
+            guard (parts.count == 2 || parts.count == 3),
+                  let hour = Int(parts[0]), let minute = Int(parts[1]),
+                  (0 ..< 24).contains(hour), (0 ..< 60).contains(minute),
+                  parts.count == 2 || parts[2] == "00" else {
                 throw ClaudeBridgeError.invalidSchedule("Zeit „\(time)“")
             }
-            minutes = parts[0] * 60 + parts[1]
+            minutes = hour * 60 + minute
         } else if let offset = entry["minutes"]?.doubleValue ?? entry["offset"]?.doubleValue {
+            guard offset.isFinite, offset.rounded() == offset, (0 ..< 1440).contains(offset) else {
+                throw ClaudeBridgeError.invalidSchedule("Minuten außerhalb 0–1439 oder nicht ganzzahlig")
+            }
             minutes = Int(offset)
         } else {
             throw ClaudeBridgeError.invalidSchedule("Eintrag ohne Zeit")
@@ -264,6 +486,20 @@ private func claudeParseSchedule(_ raw: [[String: ClaudeJSONValue]]?) throws -> 
         throw ClaudeBridgeError.invalidSchedule("Zeiten müssen aufsteigend sein")
     }
     return items
+}
+
+func claudeValidateScheduleValue(_ value: Double, target: String) throws {
+    let range: ClosedRange<Double>
+    let step: Double
+    switch target {
+    case "isf": range = 9 ... 540; step = 1
+    case "carb_ratios": range = 1 ... 50; step = 0.1
+    case "bg_targets": range = 72 ... 180; step = 1
+    default: throw ClaudeBridgeError.unknownTarget(target)
+    }
+    guard value.isFinite, range.contains(value), abs(value / step - (value / step).rounded()) < 0.000001 else {
+        throw ClaudeBridgeError.invalidSchedule("Wert außerhalb der nativen Grenzen oder Schrittweite für \(target)")
+    }
 }
 
 private func claudeValue(_ item: ClaudeScheduleItem, _ keys: [String]) throws -> Double {
@@ -367,11 +603,19 @@ private func claudeFormat(_ value: Double) -> String {
 
     // MARK: Networking
 
-    private func request(_ path: String, method: String = "GET", body: Any? = nil) async throws -> Data {
-        guard let token = ClaudeBridgeConfig.token, !ClaudeBridgeConfig.baseURL.isEmpty else {
+    private struct Connection {
+        let baseURL: String
+        let token: String?
+    }
+
+    private var connection: Connection { Connection(baseURL: ClaudeBridgeConfig.baseURL, token: ClaudeBridgeConfig.token) }
+
+    private func request(_ path: String, method: String = "GET", body: Any? = nil, connection: Connection? = nil) async throws -> Data {
+        let connection = connection ?? self.connection
+        guard let token = connection.token, !connection.baseURL.isEmpty else {
             throw ClaudeBridgeError.notConfigured
         }
-        var base = ClaudeBridgeConfig.baseURL
+        var base = connection.baseURL
         if !base.lowercased().hasPrefix("http") { base = "http://" + base }
         while base.hasSuffix("/") { base.removeLast() }
         guard let url = URL(string: base + path) else { throw ClaudeBridgeError.badURL }
@@ -519,13 +763,97 @@ private func claudeFormat(_ value: Double) -> String {
         guard !fresh.isEmpty else { return }
         fresh.forEach { notifiedIDs.insert($0.id) }
         let content = UNMutableNotificationContent()
-        content.title = "Claude schlägt eine Änderung vor"
+        content.title = "Die KI schlägt eine Änderung vor"
         content.body = fresh.count == 1
             ? (fresh[0].reason ?? "Bitte in Trio prüfen und freigeben.")
             : "\(fresh.count) neue Vorschläge – bitte in Trio prüfen."
         content.sound = .default
         let request = UNNotificationRequest(identifier: "claude.bridge.\(fresh[0].id)", content: content, trigger: nil)
         UNUserNotificationCenter.current().add(request)
+    }
+
+    private func appPreferences() -> ClaudeAppPreferences {
+        let defaults = UserDefaults.standard
+        return ClaudeAppPreferences(
+            colorSchemePreference: ColorSchemeOption(rawValue: defaults.string(forKey: "colorSchemePreference") ?? "") ?? .systemDefault,
+            calendarID: resolver?.resolve(CalendarManager.self)?.currentCalendarID ?? "",
+            liveActivityOrder: defaults.stringArray(forKey: "liveActivityOrder") ?? LiveActivityItem.defaultItems.map(\.rawValue),
+            isTrioRemoteControlEnabled: defaults.bool(forKey: "isTrioRemoteControlEnabled")
+        )
+    }
+
+    private func mealPreferences() -> ClaudeAIMealPreferences {
+        ClaudeAIMealPreferences(
+            provider: AIMealSettingsStore.provider.rawValue,
+            anthropicModel: AIMealSettingsStore.model(for: .anthropic),
+            openAIModel: AIMealSettingsStore.model(for: .openAI),
+            openAICompatibleModel: AIMealSettingsStore.model(for: .openAICompatible),
+            customBaseURL: AIMealSettingsStore.customBaseURL
+        )
+    }
+
+    private func settingsCatalog() -> [[String: Any]] {
+        var rows: [[String: Any]] = []
+        func add<T: Encodable>(_ target: String, _ value: T) {
+            if let values = try? claudeDictionary(value) { rows += claudeCatalogRows(target: target, values: values) }
+        }
+        if let settingsManager {
+            add("settings", settingsManager.settings)
+            add("preferences", settingsManager.preferences)
+            add("pump_settings", settingsManager.pumpSettings)
+        }
+        add("glucose_alerts", ClaudeGlucoseAlertSettings(
+            configuration: GlucoseAlertsStore.shared.configuration, alerts: GlucoseAlertsStore.shared.alerts
+        ))
+        add("device_alerts", ClaudeDeviceAlertSettings(configs: DeviceAlertsStore.shared.configs))
+        add("app_preferences", appPreferences())
+        add("ai_meal", mealPreferences())
+        add("bridge_config", ClaudeBridgePreferences(enabled: ClaudeBridgeConfig.enabled, baseURL: ClaudeBridgeConfig.baseURL))
+        let url = resolver?.resolve(Keychain.self)?.getValue(String.self, forKey: NightscoutConfig.Config.urlKey) ?? ""
+        rows += claudeCatalogRows(target: "nightscout", values: ["url": url])
+        for (target, key, reason) in [
+            ("nightscout", "secret", "Zugangsdaten ausschließlich lokal in Nightscout eingeben; Verbindung wird geprüft."),
+            ("ai_meal", "apiKey", "API-Key ausschließlich lokal im gewählten Anbieter hinterlegen."),
+            ("bridge_config", "token", "Bridge-Token ausschließlich lokal eingeben."),
+            ("app_preferences", "remoteControlSharedSecret", "Remote-Control-Geheimnis ausschließlich lokal eingeben."),
+            ("device_setup", "pump", "Pumpen-Pairing und gerätespezifische Einstellungen im nativen Herstellerdialog."),
+            ("device_setup", "cgm", "CGM-Pairing und gerätespezifische Einstellungen im nativen Herstellerdialog."),
+            ("integrations", "tidepool", "Tidepool-Anmeldung benötigt den interaktiven OAuth-Dialog."),
+            ("permissions", "health_calendar_notifications", "iOS-Berechtigungen werden ausschließlich im Systemdialog erteilt.")
+        ] {
+            rows.append(["target": target, "key": key, "type": "string", "access": "action", "reason": reason,
+                         "constraints": [:], "current": NSNull()])
+        }
+        // These vendor settings have no public read/write API. Name them explicitly instead of claiming proposal support.
+        let libreReason = "Im nativen Libre-CGM-Dialog ändern; Vendor-Modul bietet keine öffentliche Get/Set-API."
+        for key in ["mmBackfillFromHistory", "mmSyncToNS", "shouldPersistSensorData", "mmAlwaysDisplayGlucose",
+                    "mmShowTransmitterBattery", "mmAlertLowBatteryWarning", "mmAlertInvalidSensorDetected",
+                    "mmAlertNewSensorDetected", "mmAlertNoSensorDetected", "mmAlertSensorSoonExpire"] {
+            rows.append(["target": "libre_settings", "key": key, "type": "boolean", "current": NSNull(),
+                         "access": "action", "constraints": [:], "reason": libreReason])
+        }
+        for (key, type, constraints) in [
+            ("mmNotifyEveryXTimes", "number", ["minimum": 0, "maximum": 9, "integer": true] as [String: Any]),
+            ("mmCriticalAlarmsVolume", "number", ["minimum": 60, "maximum": 100, "step": 5, "requires": "iOS Critical Alerts permission"]),
+            ("glucoseSchedules", "array", ["itemFields": ["from", "to", "enabled", "lowAlarm", "highAlarm"]]),
+            ("snoozedUntil", "string", ["description": "Lokale Alarm-Stummschaltung"])
+        ] {
+            rows.append(["target": "libre_settings", "key": key, "type": type, "current": NSNull(),
+                         "access": "action", "constraints": constraints, "reason": libreReason])
+        }
+        if let storage {
+            for (target, value, constraints) in [
+                ("basal_profile", claudeJSONObject(storage.retrieve(OpenAPS.Settings.basalProfile, as: [BasalProfileEntry].self) ?? []), ["unit": "U/h", "intervalMinutes": 30] as [String: Any]),
+                ("isf", claudeJSONObject(storage.retrieve(OpenAPS.Settings.insulinSensitivities, as: InsulinSensitivities.self)?.sensitivities ?? []), ["minimum": 9, "maximum": 540, "unit": "mg/dL/U", "intervalMinutes": 30]),
+                ("carb_ratios", claudeJSONObject(storage.retrieve(OpenAPS.Settings.carbRatios, as: CarbRatios.self)?.schedule ?? []), ["minimum": 1, "maximum": 50, "unit": "g/U", "intervalMinutes": 30]),
+                ("bg_targets", claudeJSONObject(storage.retrieve(OpenAPS.Settings.bgTargets, as: BGTargets.self)?.targets ?? []), ["minimum": 72, "maximum": 180, "unit": "mg/dL", "intervalMinutes": 30])
+            ] {
+                rows.append(["target": target, "key": "schedule", "type": "array", "current": value,
+                             "access": "proposal", "constraints": constraints])
+            }
+        }
+        if let resolver { rows += AIAdditionalSettings.catalogRows(resolver: resolver) }
+        return rows
     }
 
     // MARK: Snapshot (read-only data for Claude)
@@ -584,7 +912,14 @@ private func claudeFormat(_ value: Double) -> String {
             status["lastLoop"] = ISO8601DateFormatter().string(from: lastLoop)
         }
         result["status"] = status
+        result["settingsCatalog"] = settingsCatalog()
         return result
+    }
+
+    private func uploadTherapySettings() async {
+        do { try await resolver?.resolve(NightscoutManager.self)?.uploadProfiles() }
+        catch { warning(.default, "Profile upload failed after approved change: \(error.localizedDescription)") }
+        await resolver?.resolve(TidepoolManager.self)?.uploadSettings()
     }
 
     // MARK: Prepare (preview) & apply
@@ -594,22 +929,76 @@ private func claudeFormat(_ value: Double) -> String {
 
         switch proposal.target {
         case "settings":
-            let (newValue, lines) = try patched(settingsManager.settings, with: proposal.patch)
+            let (newValue, lines) = try patched(settingsManager.settings, with: proposal.patch, target: "settings")
+            let oldValue = settingsManager.settings
+            guard newValue.low < newValue.high else { throw ClaudeBridgeError.invalidSetting("low muss kleiner als high sein") }
+            guard newValue.cgmPluginIdentifier == oldValue.cgmPluginIdentifier else {
+                throw ClaudeBridgeError.invalidSetting("CGM-Plugin ausschließlich im nativen Pairing-Dialog ändern")
+            }
+            if newValue.cgm != oldValue.cgm, newValue.cgm == .plugin || oldValue.cgm == .plugin {
+                throw ClaudeBridgeError.invalidSetting("CGM-Plugin ausschließlich im nativen Pairing-Dialog ändern")
+            }
+            if (newValue.dosingMode != oldValue.dosingMode || newValue.cgm != oldValue.cgm), newValue.dosingMode != .open,
+               (newValue.cgm == .none || deviceManager?.pumpManager == nil) {
+                throw ClaudeBridgeError.invalidSetting("Automatisierung benötigt CGM und Pumpe")
+            }
+            let resolver = self.resolver
             return ClaudePreparedChange(proposal: proposal, title: "Trio-Einstellungen", lines: lines) {
+                if newValue.useCalendar && !oldValue.useCalendar {
+                    guard await resolver?.resolve(CalendarManager.self)?.requestAccessIfNeeded() == true else {
+                        throw ClaudeBridgeError.invalidSetting("Kalenderberechtigung fehlt")
+                    }
+                }
+                if newValue.useAppleHealth && !oldValue.useAppleHealth {
+                    guard try await resolver?.resolve(HealthKitManager.self)?.requestPermission() == true else {
+                        throw ClaudeBridgeError.invalidSetting("Health-Berechtigung fehlt")
+                    }
+                }
+                guard claudeValuesEqual(try claudeDictionary(settingsManager.settings), try claudeDictionary(oldValue)) else {
+                    throw ClaudeBridgeError.invalidSetting("Einstellungen wurden während der Freigabe geändert; Vorschlag erneut prüfen")
+                }
                 settingsManager.settings = newValue
+                if newValue.cgm != oldValue.cgm {
+                    resolver?.resolve(FetchGlucoseManager.self)?.updateGlucoseSource(
+                        cgmGlucoseSourceType: newValue.cgm, cgmGlucosePluginId: newValue.cgm.rawValue
+                    )
+                    broadcaster.notify(GlucoseObserver.self, on: .main) { $0.glucoseDidUpdate([]) }
+                }
+                if newValue.isUploadEnabled && !oldValue.isUploadEnabled {
+                    do { try await resolver?.resolve(NightscoutManager.self)?.uploadProfiles() }
+                    catch { warning(.default, "Nightscout profile upload after approved settings change failed: \(error.localizedDescription)") }
+                }
             }
 
         case "preferences":
-            let (newValue, lines) = try patched(settingsManager.preferences, with: proposal.patch)
+            let oldValue = settingsManager.preferences
+            let (newValue, lines) = try patched(oldValue, with: proposal.patch, target: "preferences")
+            guard !newValue.sigmoid || newValue.useNewFormula else {
+                throw ClaudeBridgeError.invalidSetting("Sigmoid benötigt aktivierte dynamische Empfindlichkeit (useNewFormula)")
+            }
+            guard newValue.autosensMin <= newValue.autosensMax else {
+                throw ClaudeBridgeError.invalidSetting("autosens_min darf autosens_max nicht übersteigen")
+            }
+            let resolver = self.resolver
             return ClaudePreparedChange(proposal: proposal, title: "Algorithmus-Einstellungen (oref)", lines: lines) {
+                if newValue.useNewFormula && !oldValue.useNewFormula {
+                    guard try await resolver?.resolve(TDDStorage.self)?.hasSufficientTDD() == true else {
+                        throw ClaudeBridgeError.invalidSetting("Dynamische Empfindlichkeit benötigt ausreichend TDD-Verlauf")
+                    }
+                }
+                guard settingsManager.preferences == oldValue else {
+                    throw ClaudeBridgeError.invalidSetting("Algorithmus-Einstellungen wurden während der Freigabe geändert")
+                }
                 settingsManager.preferences = newValue
             }
 
         case "isf":
             let items = try claudeParseSchedule(proposal.schedule)
             let entries = try items.map { item in
-                InsulinSensitivityEntry(
-                    sensitivity: claudeDecimal(try claudeValue(item, ["value", "sensitivity", "isf"]), places: 1),
+                let value = try claudeValue(item, ["value", "sensitivity", "isf"])
+                try claudeValidateScheduleValue(value, target: "isf")
+                return InsulinSensitivityEntry(
+                    sensitivity: claudeDecimal(value, places: 1),
                     offset: item.minutes,
                     start: claudeStartString(item.minutes)
                 )
@@ -627,15 +1016,18 @@ private func claudeFormat(_ value: Double) -> String {
                 broadcaster.notify(InsulinSensitivitiesObserver.self, on: .main) {
                     $0.insulinSensitivitiesDidChange(profile)
                 }
+                await self.uploadTherapySettings()
             }
 
         case "carb_ratios":
             let items = try claudeParseSchedule(proposal.schedule)
             let entries = try items.map { item in
-                CarbRatioEntry(
+                let value = try claudeValue(item, ["value", "ratio"])
+                try claudeValidateScheduleValue(value, target: "carb_ratios")
+                return CarbRatioEntry(
                     start: claudeStartString(item.minutes),
                     offset: item.minutes,
-                    ratio: claudeDecimal(try claudeValue(item, ["value", "ratio"]), places: 1)
+                    ratio: claudeDecimal(value, places: 1)
                 )
             }
             let old = storage.retrieve(OpenAPS.Settings.carbRatios, as: CarbRatios.self)?
@@ -651,13 +1043,16 @@ private func claudeFormat(_ value: Double) -> String {
                 broadcaster.notify(CarbRatiosObserver.self, on: .main) {
                     $0.carbRatiosDidChange(profile)
                 }
+                await self.uploadTherapySettings()
             }
 
         case "bg_targets":
             let items = try claudeParseSchedule(proposal.schedule)
             let entries = try items.map { item -> BGTargetEntry in
                 let low = try claudeValue(item, ["low", "value", "target"])
-                let high = (try? claudeValue(item, ["high"])) ?? low
+                let high = item.fields["high"] == nil ? low : try claudeValue(item, ["high"])
+                try claudeValidateScheduleValue(low, target: "bg_targets")
+                try claudeValidateScheduleValue(high, target: "bg_targets")
                 guard high >= low else { throw ClaudeBridgeError.invalidSchedule("high < low") }
                 return BGTargetEntry(
                     low: claudeDecimal(low, places: 0),
@@ -677,19 +1072,19 @@ private func claudeFormat(_ value: Double) -> String {
                 broadcaster.notify(BGTargetsObserver.self, on: .main) {
                     $0.bgTargetsDidChange(profile)
                 }
+                await self.uploadTherapySettings()
             }
 
         case "basal_profile":
             let items = try claudeParseSchedule(proposal.schedule)
-            let supported = deviceManager?.pumpManager?.supportedBasalRates.filter { $0 > 0 } ?? []
+            guard let pump = deviceManager?.pumpManager else { throw ClaudeBridgeError.noPump }
+            let supported = pump.supportedBasalRates.filter { $0 > 0 }
             let entries = try items.map { item -> BasalProfileEntry in
                 var rate = try claudeValue(item, ["value", "rate"])
-                if !supported.isEmpty {
-                    guard let match = supported.first(where: { abs($0 - rate) < 0.0005 }) else {
-                        throw ClaudeBridgeError.unsupportedBasalRate(rate)
-                    }
-                    rate = match
+                guard let match = supported.first(where: { abs($0 - rate) < 0.0005 }) else {
+                    throw ClaudeBridgeError.unsupportedBasalRate(rate)
                 }
+                rate = match
                 return BasalProfileEntry(start: claudeStartString(item.minutes), minutes: item.minutes, rate: claudeDecimal(rate))
             }
             let old = storage.retrieve(OpenAPS.Settings.basalProfile, as: [BasalProfileEntry].self)?
@@ -720,18 +1115,155 @@ private func claudeFormat(_ value: Double) -> String {
                 broadcaster.notify(BasalProfileObserver.self, on: .main) {
                     $0.basalProfileDidChange(entries)
                 }
+                await self.uploadTherapySettings()
             }
 
         default:
+            return try prepareAdditional(proposal)
+        }
+    }
+
+    private func prepareAdditional(_ proposal: ClaudeProposal) throws -> ClaudePreparedChange {
+        guard let resolver else { throw ClaudeBridgeError.notConfigured }
+        switch proposal.target {
+        case "pump_settings":
+            guard let settingsManager else { throw ClaudeBridgeError.notConfigured }
+            let (new, lines) = try patched(settingsManager.pumpSettings, with: proposal.patch, target: proposal.target)
+            let provider = UnitsLimitsSettings.Provider(resolver: resolver)
+            return ClaudePreparedChange(proposal: proposal, title: "Insulinwirkdauer und Abgabegrenzen", lines: lines) {
+                for try await _ in provider.save(settings: new).values {}
+                let actual = try claudeDictionary(settingsManager.pumpSettings)
+                let requested = try claudeDictionary(new)
+                let mismatches = (proposal.patch ?? [:]).keys.filter { !claudeValuesEqual(actual[$0], requested[$0]) }.sorted()
+                guard mismatches.isEmpty else {
+                    let result = mismatches.map { "\($0)=\(claudeJSONString(actual[$0]))" }.joined(separator: ", ")
+                    throw ClaudeBridgeError.invalidSetting("Pumpe hat abweichende Istwerte gespeichert: \(result)")
+                }
+                await self.uploadTherapySettings()
+            }
+        case "glucose_alerts":
+            let store = GlucoseAlertsStore.shared
+            let old = ClaudeGlucoseAlertSettings(configuration: store.configuration, alerts: store.alerts)
+            let (new, lines) = try patched(old, with: proposal.patch, target: proposal.target)
+            try claudeValidateGlucoseAlerts(new.alerts, configuration: new.configuration)
+            for alert in new.alerts where alert.snoozedUntil != old.alerts.first(where: { $0.id == alert.id })?.snoozedUntil {
+                throw ClaudeBridgeError.invalidSetting("Alarm-Stummschaltung bleibt eine separate lokale Aktion")
+            }
+            return ClaudePreparedChange(proposal: proposal, title: "Glukose-Alarme", lines: lines) {
+                store.configuration = new.configuration
+                store.alerts = new.alerts
+            }
+        case "device_alerts":
+            let store = DeviceAlertsStore.shared
+            let (new, lines) = try patched(ClaudeDeviceAlertSettings(configs: store.configs), with: proposal.patch, target: proposal.target)
+            try claudeValidateDeviceAlerts(new.configs)
+            return ClaudePreparedChange(proposal: proposal, title: "Geräte-Alarme", lines: lines) { store.configs = new.configs }
+        case "app_preferences":
+            let (new, lines) = try patched(appPreferences(), with: proposal.patch, target: proposal.target)
+            guard new.liveActivityOrder.count == 4,
+                  new.liveActivityOrder.allSatisfy({ $0.isEmpty || LiveActivityItem(rawValue: $0) != nil }) else {
+                throw ClaudeBridgeError.invalidSetting("Live Activity benötigt vier gültige Felder")
+            }
+            if !new.calendarID.isEmpty,
+               !(resolver.resolve(CalendarManager.self)?.calendarIDs().contains(new.calendarID) ?? false) {
+                throw ClaudeBridgeError.invalidSetting("Kalender nicht verfügbar; Kalenderberechtigung lokal erteilen")
+            }
+            if new.isTrioRemoteControlEnabled,
+               (UserDefaults.standard.string(forKey: "trioRemoteControlSharedSecret") ?? "").isEmpty {
+                throw ClaudeBridgeError.invalidSetting("Remote-Control-Geheimnis zuerst lokal einrichten")
+            }
+            return ClaudePreparedChange(proposal: proposal, title: "App-Darstellung und Dienste", lines: lines) {
+                UserDefaults.standard.set(new.colorSchemePreference.rawValue, forKey: "colorSchemePreference")
+                UserDefaults.standard.saveLiveActivityOrder(new.liveActivityOrder.map { LiveActivityItem(rawValue: $0) })
+                Foundation.NotificationCenter.default.post(name: .liveActivityOrderDidChange, object: nil)
+                UserDefaults.standard.set(new.isTrioRemoteControlEnabled, forKey: "isTrioRemoteControlEnabled")
+                if var calendar = resolver.resolve(CalendarManager.self) {
+                    calendar.currentCalendarID = new.calendarID.isEmpty ? nil : new.calendarID
+                }
+            }
+        case "ai_meal":
+            let (new, lines) = try patched(mealPreferences(), with: proposal.patch, target: proposal.target)
+            guard let provider = AIMealProvider(rawValue: new.provider) else { throw ClaudeBridgeError.notApplied("provider") }
+            let selectedModel = provider == .anthropic ? new.anthropicModel : provider == .openAI ? new.openAIModel : new.openAICompatibleModel
+            guard [new.anthropicModel, new.openAIModel, new.openAICompatibleModel, new.customBaseURL].allSatisfy({
+                $0 == $0.trimmingCharacters(in: .whitespacesAndNewlines)
+            }), !new.anthropicModel.isEmpty else {
+                throw ClaudeBridgeError.invalidSetting("Modell-IDs/URL ohne äußere Leerzeichen; Anthropic-Modell darf nicht leer sein")
+            }
+            guard !selectedModel.isEmpty else {
+                throw ClaudeBridgeError.invalidSetting("Modell-ID erforderlich")
+            }
+            if provider == .openAICompatible || !new.customBaseURL.isEmpty {
+                _ = try AIMealConfiguration.normalizedBaseURL(new.customBaseURL)
+            }
+            return ClaudePreparedChange(proposal: proposal, title: "KI-Mahlzeitenanbieter", lines: lines) {
+                AIMealSettingsStore.customBaseURL = new.customBaseURL
+                AIMealSettingsStore.setModel(new.anthropicModel, for: .anthropic)
+                AIMealSettingsStore.setModel(new.openAIModel, for: .openAI)
+                AIMealSettingsStore.setModel(new.openAICompatibleModel, for: .openAICompatible)
+                AIMealSettingsStore.provider = provider
+            }
+        case "bridge_config":
+            let old = ClaudeBridgePreferences(enabled: ClaudeBridgeConfig.enabled, baseURL: ClaudeBridgeConfig.baseURL)
+            let (new, lines) = try patched(old, with: proposal.patch, target: proposal.target)
+            if !new.baseURL.isEmpty {
+                guard let components = URLComponents(string: new.baseURL), let host = components.host, !host.isEmpty,
+                      ["http", "https"].contains(components.scheme ?? ""), components.user == nil, components.password == nil,
+                      components.query == nil, components.fragment == nil else { throw ClaudeBridgeError.badURL }
+            }
+            guard !new.enabled || !new.baseURL.isEmpty else { throw ClaudeBridgeError.badURL }
+            return ClaudePreparedChange(proposal: proposal, title: "KI-Bridge-Verbindung", lines: lines) {
+                if new.baseURL != old.baseURL { ClaudeBridgeConfig.setToken(nil) }
+                ClaudeBridgeConfig.baseURL = new.baseURL
+                ClaudeBridgeConfig.enabled = new.enabled
+            }
+        case "nightscout":
+            guard let keychain = resolver.resolve(Keychain.self) else { throw ClaudeBridgeError.notConfigured }
+            let oldURL = keychain.getValue(String.self, forKey: NightscoutConfig.Config.urlKey) ?? ""
+            let (new, lines) = try patched(["url": oldURL], with: proposal.patch, target: proposal.target)
+            let url = try claudeValidateEndpoint(new["url"] ?? "", allowLocalHTTP: false)
+            let old = URLComponents(string: oldURL)
+            let next = URLComponents(url: url, resolvingAgainstBaseURL: false)
+            let sameOrigin = old?.scheme == next?.scheme && old?.host == next?.host && old?.port == next?.port
+            let secret = sameOrigin ? keychain.getValue(String.self, forKey: NightscoutConfig.Config.secretKey) : nil
+            return ClaudePreparedChange(proposal: proposal, title: "Nightscout-Verbindung", lines: lines) {
+                for try await _ in NightscoutAPI(url: url, secret: secret).checkConnection().values {}
+                guard (keychain.getValue(String.self, forKey: NightscoutConfig.Config.urlKey) ?? "") == oldURL else {
+                    throw ClaudeBridgeError.invalidSetting("Nightscout-Verbindung wurde während der Prüfung geändert")
+                }
+                if !sameOrigin { keychain.setValue("", forKey: NightscoutConfig.Config.secretKey) }
+                keychain.setValue(url.absoluteString, forKey: NightscoutConfig.Config.urlKey)
+            }
+        case "relay_config":
+            guard let patch = proposal.patch, let old = proposal.oldValues else { throw ClaudeBridgeError.emptyPatch }
+            let allowed = Set(["provider", "model", "baseURL", "analysisTime"])
+            guard Set(patch.keys).isSubset(of: allowed), Set(patch.keys).isSubset(of: Set(old.keys)) else {
+                throw ClaudeBridgeError.notApplied("relay_config")
+            }
+            try claudeValidateSettingPatch(patch, current: old.mapValues(\.anyValue), target: proposal.target)
+            var lines: [ClaudeDiffLine] = []
+            for key in patch.keys.sorted() {
+                guard let value = patch[key]?.stringValue else { throw ClaudeBridgeError.notApplied(key) }
+                if key == "baseURL", !value.isEmpty { _ = try claudeValidateEndpoint(value) }
+                if key == "model", value.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty { throw ClaudeBridgeError.notApplied(key) }
+                if key == "analysisTime", value.range(of: #"^([01][0-9]|2[0-3]):[0-5][0-9]$"#, options: .regularExpression) == nil {
+                    throw ClaudeBridgeError.notApplied(key)
+                }
+                lines.append(ClaudeDiffLine(key: key, old: claudeJSONString(old[key]?.anyValue), new: claudeJSONString(value), warning: nil))
+            }
+            return ClaudePreparedChange(proposal: proposal, title: "Mac-Relay und Tagesanalyse", lines: lines) {}
+        default:
+            if let change = try AIAdditionalSettings.prepare(proposal, resolver: resolver) { return change }
             throw ClaudeBridgeError.unknownTarget(proposal.target)
         }
     }
 
     /// Applies a key/value patch to any Codable settings struct, validating that every key really took effect.
-    private func patched<T: Codable>(_ value: T, with patch: [String: ClaudeJSONValue]?) throws -> (T, [ClaudeDiffLine]) {
+    private func patched<T: Codable>(_ value: T, with patch: [String: ClaudeJSONValue]?, target: String) throws -> (T, [ClaudeDiffLine]) {
         guard let patch, !patch.isEmpty else { throw ClaudeBridgeError.emptyPatch }
         var dict = try claudeDictionary(value)
         let oldDict = dict
+        try claudeValidateSettingPatch(patch, current: oldDict, target: target)
         for (key, newValue) in patch {
             dict[key] = newValue.anyValue
         }
@@ -773,40 +1305,75 @@ private func claudeFormat(_ value: Double) -> String {
         }
     }
 
-    func approve(_ proposal: ClaudeProposal) async {
+    func approve(_ proposal: ClaudeProposal, preview: [ClaudeDiffLine]) async -> Bool {
+        let reportConnection = connection
+        var change: ClaudePreparedChange
         do {
-            let change = try prepare(proposal)
-            try await authenticate("Änderung von Claude übernehmen: \(change.title)")
+            let beforeAuthentication = try prepare(proposal)
+            guard claudeChangesMatch(preview, beforeAuthentication.lines) else {
+                throw ClaudeBridgeError.invalidSetting("Einstellungen wurden seit der Vorschau geändert; Vorschlag erneut prüfen")
+            }
+            try await authenticate("Änderung der KI übernehmen: \(beforeAuthentication.title)")
+            let currentData = try await request("/trio/proposals?status=pending", connection: reportConnection)
+            let currentProposals = try JSONDecoder().decode([ClaudeProposal].self, from: currentData)
+            guard currentProposals.contains(proposal) else {
+                throw ClaudeBridgeError.invalidSetting("Vorschlag wurde auf dem Relay geändert oder zurückgezogen")
+            }
+            change = try prepare(proposal)
+            guard claudeChangesMatch(preview, change.lines) else {
+                throw ClaudeBridgeError.invalidSetting("Einstellungen wurden während der Freigabe geändert; Vorschlag erneut prüfen")
+            }
+            // Reserve the proposal after local approval; cancellation can no longer race the commit.
+            _ = try await request("/trio/proposals/\(proposal.id)/claim", method: "POST", body: [:], connection: reportConnection)
+            change = try prepare(proposal)
+            guard claudeChangesMatch(preview, change.lines) else {
+                throw ClaudeBridgeError.invalidSetting("Einstellungen wurden während der Reservierung geändert; Vorschlag erneut prüfen")
+            }
+            // Fresh closures preserve unrelated settings changed while authentication was open.
             try await change.commit()
-            let summary = change.lines.map { "\($0.key): \($0.old) → \($0.new)" }.joined(separator: "; ")
-            log("✅ \(change.title) übernommen – \(summary)")
-            await report(proposal, status: "applied", message: summary)
         } catch ClaudeBridgeError.authenticationFailed {
             lastError = ClaudeBridgeError.authenticationFailed.localizedDescription
-            return
+            return false
         } catch {
-            log("⚠️ Fehler bei Vorschlag \(proposal.id): \(error.localizedDescription)")
-            await report(proposal, status: "failed", message: error.localizedDescription)
+            let message = error.localizedDescription
+            log("⚠️ Fehler bei Vorschlag \(proposal.id): \(message)")
+            _ = await report(proposal, status: "failed", message: message, connection: reportConnection)
+            lastError = message
+            return false
         }
+        let summary = change.lines.map { "\($0.key): \($0.old) → \($0.new)" }.joined(separator: "; ")
+        // The relay claim prevents a second application; a missing acknowledgement must not offer the action again.
+        pending.removeAll { $0.id == proposal.id }
+        guard await report(proposal, status: "applied", message: summary, connection: reportConnection) else {
+            log(proposal.target == "relay_config"
+                ? "⚠️ Relay-Änderung nicht bestätigt: \(lastError ?? "Verbindungsfehler")"
+                : "⚠️ Lokal übernommen; Rückmeldung ausstehend: \(change.title)")
+            return true
+        }
+        log("✅ \(change.title) übernommen – \(summary)")
         await sync()
+        return true
     }
 
     func reject(_ proposal: ClaudeProposal, note: String = "") async {
         log("✋ Vorschlag \(proposal.id) abgelehnt")
-        await report(proposal, status: "rejected", message: note.isEmpty ? "Vom Nutzer abgelehnt" : note)
+        _ = await report(proposal, status: "rejected", message: note.isEmpty ? "Vom Nutzer abgelehnt" : note)
         await sync()
     }
 
-    private func report(_ proposal: ClaudeProposal, status: String, message: String) async {
+    private func report(_ proposal: ClaudeProposal, status: String, message: String, connection: Connection? = nil) async -> Bool {
         do {
             _ = try await request(
                 "/trio/proposals/\(proposal.id)/result",
                 method: "POST",
-                body: ["status": status, "message": message, "at": ISO8601DateFormatter().string(from: Date())]
+                body: ["status": status, "message": message, "at": ISO8601DateFormatter().string(from: Date())],
+                connection: connection
             )
             pending.removeAll { $0.id == proposal.id }
+            return true
         } catch {
             lastError = error.localizedDescription
+            return false
         }
     }
 
@@ -844,13 +1411,13 @@ struct ClaudeBridgeView: View {
                     Text("Keine offenen Vorschläge").foregroundStyle(.secondary)
                 }
             } header: {
-                Text("Vorschläge von Claude")
+                Text("KI-Vorschläge")
             } footer: {
-                Text("Claude kann Einstellungen nur vorschlagen. Jede Änderung wird erst nach deiner Freigabe mit Face ID übernommen.")
+                Text("Die KI kann Einstellungen vorschlagen. Jede Änderung wird erst nach deiner Prüfung und lokalen Freigabe übernommen.")
             }
 
             Section {
-                Toggle("Claude-Bridge aktiv", isOn: $enabled)
+                Toggle("KI-Bridge aktiv", isOn: $enabled)
                     .onChange(of: enabled) { _, value in
                         ClaudeBridgeConfig.enabled = value
                         Task { await bridge.sync() }
@@ -887,7 +1454,7 @@ struct ClaudeBridgeView: View {
             } header: {
                 Text("Verbindung (trio-mcp)")
             } footer: {
-                Text("Trio sendet Einstellungen, Status und den Verlauf der letzten 30 Tage (Glukose, Insulin, KH, Loop-Entscheidungen) an deinen trio-mcp-Server. Dort erstellt Claude täglich eine Analyse.")
+                Text("Trio sendet Einstellungen, Status und den Verlauf der letzten 30 Tage (Glukose, Insulin, KH, Loop-Entscheidungen) an deinen trio-mcp-Server. Dort erstellt dein gewählter KI-Anbieter täglich eine Analyse.")
             }
 
             if !bridge.history.isEmpty {
@@ -898,7 +1465,7 @@ struct ClaudeBridgeView: View {
                 }
             }
         }
-        .navigationTitle("Claude")
+        .navigationTitle("KI-Bridge")
         .navigationBarTitleDisplayMode(.inline)
     }
 }
@@ -920,6 +1487,19 @@ struct ClaudeProposalDetailView: View {
         case "carb_ratios": return "Kohlenhydrat-Faktor"
         case "bg_targets": return "Glukose-Zielbereich"
         case "basal_profile": return "Basalrate"
+        case "pump_settings": return "Insulinwirkdauer und Abgabegrenzen"
+        case "glucose_alerts": return "Glukose-Alarme"
+        case "device_alerts": return "Geräte-Alarme"
+        case "app_preferences": return "App-Darstellung und Dienste"
+        case "ai_meal": return "KI-Mahlzeitenanbieter"
+        case "bridge_config": return "KI-Bridge-Verbindung"
+        case "nightscout": return "Nightscout-Verbindung"
+        case "relay_config": return "Mac-Relay und Tagesanalyse"
+        case "diagnostics": return "Diagnosedaten"
+        case "cgm_simulator": return "CGM-Simulator"
+        case "override_presets": return "Override-Vorlagen"
+        case "temp_target_presets": return "Temporäre Zielwert-Vorlagen"
+        case "meal_presets": return "Mahlzeiten-Vorlagen"
         default: return target
         }
     }
@@ -927,9 +1507,12 @@ struct ClaudeProposalDetailView: View {
     var body: some View {
         Form {
             if let reason = proposal.reason {
-                Section(header: Text("Begründung von Claude")) { Text(reason) }
+                Section(header: Text("Begründung der KI")) { Text(reason) }
             }
 
+            if let prepareError {
+                Section { Text(prepareError).foregroundStyle(.red) }
+            }
             if let prepared {
                 Section {
                     ForEach(prepared.lines) { line in
@@ -957,9 +1540,13 @@ struct ClaudeProposalDetailView: View {
                     Button {
                         working = true
                         Task {
-                            await bridge.approve(proposal)
+                            let applied = await bridge.approve(proposal, preview: prepared.lines)
                             working = false
-                            dismiss()
+                            if applied { dismiss() }
+                            else {
+                                self.prepared = try? bridge.prepare(proposal)
+                                prepareError = bridge.lastError
+                            }
                         }
                     } label: {
                         Label("Freigeben (Face ID)", systemImage: "faceid").frame(maxWidth: .infinity)
@@ -980,7 +1567,7 @@ struct ClaudeProposalDetailView: View {
             } else if let prepareError {
                 Section(header: Text("Vorschlag kann nicht angewendet werden")) {
                     Text(prepareError).foregroundStyle(.red)
-                    Button("Ablehnen und an Claude melden", role: .destructive) {
+                    Button("Ablehnen und an KI melden", role: .destructive) {
                         Task {
                             await bridge.reject(proposal, note: prepareError)
                             dismiss()

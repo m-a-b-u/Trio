@@ -1,17 +1,17 @@
 #!/usr/bin/env node
-// trio-mcp — relay between Trio (iPhone) and Claude (MCP).
+// trio-mcp — relay between Trio (iPhone) and AI clients (MCP).
 //
 //   node trio-mcp.mjs serve            HTTP relay for the iPhone (run permanently, e.g. via launchd)
 //   node trio-mcp.mjs mcp              MCP server over stdio (started by Claude Desktop / Claude Code)
 //   node trio-mcp.mjs info             Print URL + token to enter in Trio
 //   node trio-mcp.mjs install-launchd  Start the relay automatically at login (macOS)
-//   node trio-mcp.mjs set-api-key      Store an Anthropic API key for the daily analysis
+//   node trio-mcp.mjs set-api-key      Store the selected provider API key for the daily analysis
 //   node trio-mcp.mjs set-time 07:00   Time of the daily analysis (local time, default 07:00)
 //   node trio-mcp.mjs analyze          Run the analysis now
 //
 // Companion web app: http://<mac-ip>:8765/app?token=<token>  (add to iPhone home screen)
 //
-// Safety model: Claude can read Trio's snapshot and create PROPOSALS. Nothing is changed in Trio
+// Safety model: AI clients can read Trio's snapshot and create PROPOSALS. Nothing is changed in Trio
 // until the user reviews the proposal on the iPhone and approves it with Face ID.
 
 import { randomBytes, randomUUID } from 'node:crypto'
@@ -22,7 +22,10 @@ import os from 'node:os'
 import path from 'node:path'
 import readline from 'node:readline'
 import { fileURLToPath } from 'node:url'
-import { checkStepSize, computeStats, historyThrough, mergeHistory, runClaudeAnalysis } from './analysis.mjs'
+import { checkStepSize, computeStats, historyThrough, mergeHistory, runAIAnalysis } from './analysis.mjs'
+import { AI_PROVIDERS, AI_PROVIDER_DEFAULTS, aiConfigurationStatus, normalizeBaseURL } from './providers.mjs'
+import { validateSettingsPatch } from './settings.mjs'
+import { patchRelaySettings, relaySettings, withRelayCatalog } from './relay-settings.mjs'
 
 const HOME = os.homedir()
 const DIR = process.env.TRIO_MCP_DIR || path.join(HOME, '.trio-mcp')
@@ -31,7 +34,6 @@ const DB_FILE = path.join(DIR, 'db.json')
 const HISTORY_FILE = path.join(DIR, 'history.json')
 const APP_FILE = path.join(path.dirname(fileURLToPath(import.meta.url)), 'app.html')
 const SCHEDULE_TARGETS = ['basal_profile', 'isf', 'carb_ratios', 'bg_targets']
-const PATCH_TARGETS = ['settings', 'preferences']
 
 // ---------- config / storage ----------
 
@@ -50,7 +52,10 @@ function loadConfig() {
 
 function saveConfig(config) {
   fs.mkdirSync(DIR, { recursive: true, mode: 0o700 })
-  fs.writeFileSync(CONFIG_FILE, JSON.stringify(config, null, 2), { mode: 0o600 })
+  const tmp = CONFIG_FILE + '.tmp'
+  fs.writeFileSync(tmp, JSON.stringify(config, null, 2), { mode: 0o600 })
+  fs.chmodSync(tmp, 0o600)
+  fs.renameSync(tmp, CONFIG_FILE)
 }
 
 function loadHistory() {
@@ -91,24 +96,9 @@ function lanAddresses() {
 
 // ---------- validation ----------
 
-function typeOf(v) { return v === null ? 'null' : Array.isArray(v) ? 'array' : typeof v }
-
 function validatePatch(db, target, changes) {
-  if (!changes || typeof changes !== 'object' || Array.isArray(changes) || !Object.keys(changes).length) {
-    throw new Error('changes must be a non-empty object of key → value')
-  }
-  const section = db.state?.[target]
-  if (!section) throw new Error(`No ${target} snapshot from Trio yet – open Trio so it can sync first.`)
-  const issues = []
-  for (const [key, value] of Object.entries(changes)) {
-    if (!(key in section)) { issues.push(`unknown key "${key}"`); continue }
-    const current = section[key]
-    if (current !== null && typeOf(current) !== typeOf(value)) {
-      issues.push(`"${key}" must be ${typeOf(current)} (current value ${JSON.stringify(current)})`)
-    }
-    if (typeof value === 'number' && !Number.isFinite(value)) issues.push(`"${key}" must be finite`)
-  }
-  if (issues.length) throw new Error('Invalid proposal: ' + issues.join('; '))
+  validateSettingsPatch(withRelayCatalog(db.state, loadConfig()), target, changes)
+  if (target === 'relay_config') patchRelaySettings(loadConfig(), changes)
 }
 
 function validateSchedule(target, schedule) {
@@ -132,20 +122,30 @@ function validateSchedule(target, schedule) {
   })
 }
 
-function createProposal(db, body, origin = 'claude') {
-  if (PATCH_TARGETS.includes(body.target)) validatePatch(db, body.target, body.patch)
-  else if (SCHEDULE_TARGETS.includes(body.target)) validateSchedule(body.target, body.schedule)
-  else throw new Error(`target must be one of ${[...PATCH_TARGETS, ...SCHEDULE_TARGETS].join(', ')}`)
+function createProposal(db, body, origin = 'ai-chat') {
+  if (SCHEDULE_TARGETS.includes(body.target)) validateSchedule(body.target, body.schedule)
+  else validatePatch(db, body.target, body.patch)
+  let relayBefore
+  let effectivePatch = body.patch
+  if (body.target === 'relay_config') {
+    const config = loadConfig()
+    relayBefore = relaySettings(config)
+    const after = relaySettings(patchRelaySettings(config, body.patch))
+    // Switching providers also switches their saved model/URL; preview the complete effective change.
+    effectivePatch = Object.fromEntries(Object.entries(after).filter(([key, value]) => value !== relayBefore[key]))
+    if (!Object.keys(effectivePatch).length) throw new Error('No relay settings changed')
+  }
   const proposal = {
     id: randomUUID(),
     createdAt: new Date().toISOString(),
     origin,
     target: body.target,
-    patch: body.patch ?? null,
+    patch: effectivePatch ?? null,
     schedule: body.schedule ?? null,
     reason: String(body.reason || '').slice(0, 800),
     status: 'pending'
   }
+  if (relayBefore) proposal.oldValues = relayBefore
   db.proposals.push(proposal)
   return proposal
 }
@@ -159,11 +159,12 @@ async function analyze(trigger = 'manual') {
   analysisRunning = true
   try {
     const config = loadConfig()
-    if (!config.anthropicApiKey) throw new Error('No Anthropic API key. Run: node trio-mcp.mjs set-api-key')
+    const ai = aiConfigurationStatus(config)
+    if (!ai.ready) throw new Error(ai.error || 'Configure provider, model, endpoint and API key on the Mac first.')
     const input = loadDB()
     if (!input.state) throw new Error('Trio has not synced yet')
     const stats = computeStats(loadHistory())
-    const result = await runClaudeAnalysis({ apiKey: config.anthropicApiKey, model: config.model, state: input.state, stats, previousReports: input.reports })
+    const result = await runAIAnalysis({ config, state: withRelayCatalog(input.state, config), stats, previousReports: input.reports })
     // Syncs and iPhone decisions can arrive while the model is running.
     const db = loadDB()
     const today = new Date().toDateString()
@@ -197,6 +198,7 @@ async function analyze(trigger = 'manual') {
       id: randomUUID(),
       createdAt: new Date().toISOString(),
       trigger,
+      provider: ai.provider,
       model: result.model,
       summary: result.summary,
       highlights: result.highlights || [],
@@ -217,7 +219,7 @@ async function analyze(trigger = 'manual') {
 function startScheduler() {
   setInterval(() => {
     const config = loadConfig()
-    if (!config.anthropicApiKey || analysisRunning) return
+    if (!aiConfigurationStatus(config).ready || analysisRunning) return
     const now = new Date()
     const [h, m] = String(config.analysisTime || '07:00').split(':').map(Number)
     const due = now.getHours() > h || (now.getHours() === h && now.getMinutes() >= m)
@@ -288,10 +290,35 @@ function serve() {
         const status = url.searchParams.get('status')
         return send(res, 200, db.proposals.filter((p) => !status || p.status === status))
       }
+      if (req.method === 'POST' && parts[0] === 'trio' && parts[1] === 'proposals' && parts[3] === 'claim') {
+        const p = db.proposals.find(x => x.id === parts[2])
+        if (!p) return send(res, 404, { error: 'not found' })
+        if (p.status !== 'pending') return send(res, 409, { error: `proposal is already ${p.status}` })
+        if (p.target === 'relay_config' && JSON.stringify(relaySettings(loadConfig())) !== JSON.stringify(p.oldValues)) {
+          return send(res, 409, { error: 'Relay settings changed; create and review a new proposal.' })
+        }
+        p.status = 'applying'
+        p.claimedAt = new Date().toISOString()
+        saveDB(db)
+        return send(res, 200, { ok: true })
+      }
       if (req.method === 'POST' && parts[0] === 'trio' && parts[1] === 'proposals' && parts[3] === 'result') {
         const p = db.proposals.find((x) => x.id === parts[2])
         if (!p) return send(res, 404, { error: 'not found' })
         if (!['applied', 'rejected', 'failed'].includes(body.status)) return send(res, 400, { error: 'bad status' })
+        if (p.status === body.status) return send(res, 200, { ok: true })
+        if (!['pending', 'applying'].includes(p.status)) return send(res, 409, { error: `proposal is already ${p.status}` })
+        if (p.target === 'relay_config' && body.status === 'applied') {
+          const current = loadConfig()
+          try {
+            if (JSON.stringify(relaySettings(current)) !== JSON.stringify(p.oldValues)) throw new Error('Relay settings changed since this proposal. Create and review a new proposal.')
+            saveConfig(patchRelaySettings(current, p.patch))
+          } catch (error) {
+            Object.assign(p, { status: 'failed', resultMessage: error.message, resolvedAt: new Date().toISOString() })
+            saveDB(db)
+            return send(res, 409, { error: error.message })
+          }
+        }
         Object.assign(p, { status: body.status, resultMessage: body.message ?? '', resolvedAt: body.at ?? new Date().toISOString() })
         saveDB(db)
         return send(res, 200, { ok: true })
@@ -299,7 +326,7 @@ function serve() {
 
       // --- endpoints used by the MCP side ---
       if (req.method === 'GET' && url.pathname === '/api/state') {
-        return send(res, 200, { state: db.state, stateReceivedAt: db.stateReceivedAt })
+        return send(res, 200, { state: withRelayCatalog(db.state, loadConfig()), stateReceivedAt: db.stateReceivedAt })
       }
       if (req.method === 'GET' && url.pathname === '/api/proposals') {
         const status = url.searchParams.get('status')
@@ -324,7 +351,7 @@ function serve() {
           history: { through: historyThrough(loadHistory()) },
           latestReport: (db.reports || []).at(-1) || null,
           proposals: db.proposals.slice(-30).reverse(),
-          analysis: { time: cfg.analysisTime, model: cfg.model, hasKey: Boolean(cfg.anthropicApiKey), running: analysisRunning, lastError: db.lastAnalysisError || null }
+          analysis: { time: cfg.analysisTime, ...aiConfigurationStatus(cfg), running: analysisRunning, lastError: db.lastAnalysisError || null }
         })
       }
       if (req.method === 'POST' && url.pathname === '/api/analyze') {
@@ -389,7 +416,7 @@ async function mcp() {
     {},
     guard(async () => {
       const { state, stateReceivedAt } = await api('/api/state')
-      if (!state) return text('Trio has not synced yet. Enable the Claude-Bridge in Trio → Settings → Claude.')
+      if (!state) return text('Trio has not synced yet. Enable the KI-Bridge in Trio → Settings → KI.')
       return text({
         snapshotAgeMinutes: ageMinutes(stateReceivedAt),
         units: state.units,
@@ -402,8 +429,8 @@ async function mcp() {
 
   server.tool(
     'trio_get_settings',
-    'Read Trio settings from the last iPhone sync. Sections: settings (TrioSettings), preferences (oref algorithm preferences, e.g. maxIOB, SMB, autosens, dynamic ISF), basal_profile, isf, carb_ratios, bg_targets, pump, or all. Schedules use mg/dL internally.',
-    { section: z.enum(['all', 'settings', 'preferences', 'basal_profile', 'isf', 'carb_ratios', 'bg_targets', 'pump']).default('all') },
+    'Read Trio settings from the last iPhone sync. Use trio_get_settings_catalog to discover every available target/key, type, constraints and local actions. Section can be all or any catalog target. Schedules use mg/dL internally.',
+    { section: z.string().default('all') },
     guard(async ({ section }) => {
       const { state, stateReceivedAt } = await api('/api/state')
       if (!state) return text('Trio has not synced yet.')
@@ -416,22 +443,38 @@ async function mcp() {
         bg_targets: state.bgTargets,
         pump: { pumpSettings: state.pumpSettings, supportedBasalRates: state.supportedBasalRates, pump: state.pump }
       }
+      for (const row of state.settingsCatalog || []) {
+        if (row.access === 'proposal' && !SCHEDULE_TARGETS.includes(row.target)) {
+          map[row.target] = { ...map[row.target], [row.key]: row.current }
+        }
+      }
+      if (section !== 'all' && !Object.hasOwn(map, section)) throw new Error('Unknown settings section; read trio_get_settings_catalog first.')
       const data = section === 'all' ? { ...map, scheduleUnits: state.scheduleUnits } : map[section]
       return text({ snapshotAgeMinutes: ageMinutes(stateReceivedAt), section, data })
     })
   )
 
   server.tool(
+    'trio_get_settings_catalog',
+    'Discover Trio settings, current values, types, constraints and supported write paths. access=proposal means use trio_propose_settings_change and wait for local approval. action entries require the indicated local UI step; credentials and device pairing are never exported. Old app versions may have no catalog.',
+    {},
+    guard(async () => {
+      const { state, stateReceivedAt } = await api('/api/state')
+      return text({ snapshotAgeMinutes: ageMinutes(stateReceivedAt), catalog: state?.settingsCatalog || [], next: state?.settingsCatalog ? undefined : 'Sync the current Trio app to publish its settings catalog.' })
+    })
+  )
+
+  server.tool(
     'trio_propose_settings_change',
-    'Propose changing one or more keys in Trio "settings" or "preferences". Keys must exist in the snapshot (see trio_get_settings) and keep their type. The change is NOT applied: the user must review the diff and approve it with Face ID in Trio. Always explain the reason.',
+    'Propose changing one or more keys in any writable settings catalog target. Read trio_get_settings_catalog first; keep the advertised types and constraints. Nested arrays/objects must be supplied as complete values. The change is NOT applied until the user reviews the diff and approves locally in Trio. Always explain the reason.',
     {
-      target: z.enum(['settings', 'preferences']),
-      changes: z.record(z.union([z.number(), z.boolean(), z.string()])).describe('key → new value'),
+      target: z.string().min(1),
+      changes: z.record(z.unknown()).describe('catalog key → new JSON value (including arrays/objects)'),
       reason: z.string().min(5).describe('Why this change is suggested (shown to the user)')
     },
     guard(async ({ target, changes, reason }) => {
       const p = await api('/api/proposals', { method: 'POST', body: JSON.stringify({ target, patch: changes, reason }) })
-      return text({ proposal: p, next: 'Waiting for approval on the iPhone (Trio → Settings → Claude). Check with trio_get_proposal.' })
+      return text({ proposal: p, next: 'Waiting for approval on the iPhone (Trio → Settings → KI). Check with trio_get_proposal.' })
     })
   )
 
@@ -450,14 +493,14 @@ async function mcp() {
     },
     guard(async ({ target, schedule, reason }) => {
       const p = await api('/api/proposals', { method: 'POST', body: JSON.stringify({ target, schedule, reason }) })
-      return text({ proposal: p, next: 'Waiting for approval on the iPhone (Trio → Settings → Claude).' })
+      return text({ proposal: p, next: 'Waiting for approval on the iPhone (Trio → Settings → KI).' })
     })
   )
 
   server.tool(
     'trio_list_proposals',
-    'List recent proposals and their status (pending, applied, rejected, failed, cancelled).',
-    { status: z.enum(['pending', 'applied', 'rejected', 'failed', 'cancelled']).optional() },
+    'List recent proposals and their status (pending, applying, applied, rejected, failed, cancelled). applying means the iPhone has reserved the approved change; do not retry an uncertain hardware operation.',
+    { status: z.enum(['pending', 'applying', 'applied', 'rejected', 'failed', 'cancelled']).optional() },
     guard(async ({ status }) => text(await api('/api/proposals' + (status ? `?status=${status}` : ''))))
   )
 
@@ -501,7 +544,7 @@ async function mcp() {
 
   server.tool(
     'trio_run_daily_analysis',
-    'Run the daily analysis now (uses the Anthropic API key configured on the Mac). Creates a report and pending proposals for approval in Trio.',
+    'Run the daily analysis now using the AI provider, model and credentials configured on the Mac. Creates a report and pending proposals for local approval in Trio.',
     {},
     guard(async () => text(await api('/api/analyze', { method: 'POST' })))
   )
@@ -513,7 +556,7 @@ async function mcp() {
 
 function info() {
   const config = loadConfig()
-  console.log('Enter this in Trio → Settings → Claude:')
+  console.log('Enter this in Trio → Settings → KI:')
   for (const ip of lanAddresses()) console.log(`  Server: http://${ip}:${config.port}`)
   console.log(`  Token:  ${config.token}`)
   console.log('Companion web app (open on iPhone, then "Add to Home Screen"):')
@@ -545,31 +588,63 @@ function installLaunchd() {
 }
 
 async function setApiKey() {
-  const rl = readline.createInterface({ input: process.stdin, output: process.stdout })
-  const key = await new Promise((resolve) => rl.question('Anthropic API key (sk-ant-...): ', resolve))
-  rl.close()
   const config = loadConfig()
-  config.anthropicApiKey = String(key).trim()
+  const provider = config.provider || 'anthropic'
+  const saved = providerSettings(config)
+  const baseURL = normalizeBaseURL(provider, saved.baseURL || AI_PROVIDER_DEFAULTS[provider].baseURL)
+  const rl = readline.createInterface({ input: process.stdin, output: process.stdout })
+  const key = await new Promise((resolve) => rl.question(`${AI_PROVIDER_DEFAULTS[provider].label} API key (empty removes it): `, resolve))
+  rl.close()
+  saved.apiKey = String(key).trim()
+  saved.apiKeyBaseURL = baseURL
   saveConfig(config)
-  console.log(config.anthropicApiKey ? 'Saved.' : 'Key removed.')
+  console.log(saved.apiKey ? 'Saved for this provider and endpoint.' : 'Key removed.')
+}
+
+function providerSettings(config) {
+  const provider = config.provider || 'anthropic'
+  if (!AI_PROVIDERS.includes(provider)) throw new Error('Unknown AI provider')
+  config.providers ||= {}
+  config.providers[provider] ||= {}
+  return config.providers[provider]
 }
 
 const command = process.argv[2]
 if (command === 'serve') serve()
-else if (command === 'set-api-key') setApiKey()
+else if (command === 'set-api-key') setApiKey().catch(e => { console.error(e.message); process.exitCode = 1 })
+else if (command === 'set-provider') {
+  const provider = process.argv[3]
+  if (!AI_PROVIDERS.includes(provider)) { console.error(`Usage: set-provider ${AI_PROVIDERS.join('|')}`); process.exit(1) }
+  const config = loadConfig(); config.provider = provider; saveConfig(config); console.log(`Provider: ${provider}`)
+}
+else if (command === 'set-base-url') {
+  try {
+    const config = loadConfig()
+    const provider = config.provider || 'anthropic'
+    const baseURL = normalizeBaseURL(provider, process.argv[3])
+    const saved = providerSettings(config)
+    if (saved.baseURL !== baseURL && provider === 'openai-compatible') { delete saved.apiKey; delete saved.apiKeyBaseURL }
+    saved.baseURL = baseURL
+    saveConfig(config)
+    console.log(`Base URL saved. ${provider === 'openai-compatible' ? 'Save the key again if the endpoint changed.' : ''}`)
+  } catch (error) { console.error(error.message); process.exitCode = 1 }
+}
+else if (command === 'provider-status') console.log(JSON.stringify(aiConfigurationStatus(loadConfig()), null, 2))
 else if (command === 'set-time') {
   const value = process.argv[3]
   if (!/^(?:[01]?\d|2[0-3]):[0-5]\d$/.test(value || '')) { console.error('Usage: set-time HH:MM (00:00–23:59)'); process.exit(1) }
   const config = loadConfig(); config.analysisTime = value; saveConfig(config); console.log(`Daily analysis at ${value}`)
 }
 else if (command === 'set-model') {
-  const config = loadConfig(); config.model = process.argv[3] || 'claude-sonnet-4-5'; saveConfig(config); console.log(`Model: ${config.model}`)
+  const model = process.argv[3]?.trim()
+  if (!model) { console.error('Usage: set-model MODEL_ID'); process.exit(1) }
+  const config = loadConfig(); providerSettings(config).model = model; saveConfig(config); console.log(`Model: ${model}`)
 }
 else if (command === 'analyze') api('/api/analyze', { method: 'POST' }).then((r) => console.log(JSON.stringify(r, null, 2)), (e) => { console.error(e.message); process.exit(1) })
 else if (command === 'mcp') mcp().catch((e) => { console.error(e); process.exit(1) })
 else if (command === 'info') info()
 else if (command === 'install-launchd') installLaunchd()
 else {
-  console.error('Usage: node trio-mcp.mjs <serve|mcp|info|install-launchd|set-api-key|set-time|set-model|analyze>')
+  console.error('Usage: node trio-mcp.mjs <serve|mcp|info|install-launchd|set-provider|set-base-url|set-api-key|set-time|set-model|provider-status|analyze>')
   process.exit(1)
 }

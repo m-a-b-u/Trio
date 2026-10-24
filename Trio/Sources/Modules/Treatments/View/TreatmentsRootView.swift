@@ -361,7 +361,7 @@ extension Treatments {
                                 Button {
                                     showAIMealSheet = true
                                 } label: {
-                                    Label("Mahlzeit per Foto schätzen (Claude)", systemImage: "camera.viewfinder")
+                                    Label("Mahlzeit per Foto schätzen (KI)", systemImage: "camera.viewfinder")
                                 }
                                 .buttonStyle(.borderless)
 

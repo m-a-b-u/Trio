@@ -1,6 +1,8 @@
 // Statistics + daily Claude analysis for trio-mcp.
 // All glucose values are mg/dL. Times are evaluated in the Mac's local time zone.
 
+import { requestToolResult } from './providers.mjs'
+
 const DAY = 24 * 3600 * 1000
 
 // ---------- helpers ----------
@@ -297,7 +299,8 @@ export function checkStepSize(state, proposal, maxStep = 0.2) {
   if (proposal.changes) {
     const section = state[proposal.target] || {}
     for (const [key, value] of Object.entries(proposal.changes)) {
-      const before = section[key]
+      const before = Object.hasOwn(section, key) ? section[key]
+        : state.settingsCatalog?.find(row => row.target === proposal.target && row.key === key && row.access === 'proposal')?.current
       if (typeof before === 'number' && typeof value === 'number') {
         if (!Number.isFinite(before) || !Number.isFinite(value)) return `"${key}" muss endlich sein`
         if (before === 0 && value !== 0) return `"${key}" kann ausgehend von 0 nicht prozentual begrenzt werden`
@@ -308,7 +311,43 @@ export function checkStepSize(state, proposal, maxStep = 0.2) {
   return null
 }
 
-export async function runClaudeAnalysis({ apiKey, model, state, stats, previousReports = [] }) {
+const SCHEDULE_TARGETS = ['basal_profile', 'isf', 'carb_ratios', 'bg_targets']
+
+function proposalTargets(state) {
+  const patchTargets = Array.isArray(state.settingsCatalog)
+    ? state.settingsCatalog.filter(row => row?.access === 'proposal' && typeof row.target === 'string').map(row => row.target)
+    : ['settings', 'preferences']
+  return [...new Set([...patchTargets, ...SCHEDULE_TARGETS])]
+}
+
+const isObject = value => value !== null && typeof value === 'object' && !Array.isArray(value)
+const isText = value => typeof value === 'string' && value.trim().length > 0
+
+export function validateAnalysisResult(input, state = {}) {
+  if (!isObject(input) || !isText(input.summary) || !Array.isArray(input.findings) || !Array.isArray(input.proposals)) {
+    throw new Error('Invalid analysis: summary, findings and proposals are required')
+  }
+  if (input.highlights !== undefined && (!Array.isArray(input.highlights) || input.highlights.some(item => typeof item !== 'string'))) {
+    throw new Error('Invalid analysis highlights')
+  }
+  if (input.findings.some(item => !isObject(item) || !isText(item.title) || !isText(item.detail) || !['info', 'warn', 'critical'].includes(item.severity))) {
+    throw new Error('Invalid analysis findings')
+  }
+  const targets = proposalTargets(state)
+  for (const proposal of input.proposals) {
+    if (!isObject(proposal) || !targets.includes(proposal.target) || !isText(proposal.reason)) throw new Error('Invalid analysis proposal target or reason')
+    if (SCHEDULE_TARGETS.includes(proposal.target)) {
+      if (!Array.isArray(proposal.schedule) || !proposal.schedule.length || proposal.schedule.some(entry =>
+        !isObject(entry) || typeof entry.time !== 'string' || ['value', 'low', 'high'].some(key => entry[key] !== undefined && !Number.isFinite(entry[key]))
+      )) throw new Error('Invalid analysis proposal schedule')
+    } else if (!isObject(proposal.changes) || !Object.keys(proposal.changes).length) {
+      throw new Error('Invalid analysis proposal changes')
+    }
+  }
+  return { summary: input.summary, highlights: input.highlights ?? [], findings: input.findings, proposals: input.proposals }
+}
+
+export async function runAIAnalysis({ config, state, stats, previousReports = [] }) {
   const payload = {
     today: new Date().toISOString(),
     units: 'mg/dL',
@@ -321,28 +360,23 @@ export async function runClaudeAnalysis({ apiKey, model, state, stats, previousR
       carbRatios: state.carbRatios,
       bgTargets: state.bgTargets,
       supportedBasalRates: state.supportedBasalRates,
-      pump: state.pump
+      pump: state.pump,
+      settingsCatalog: state.settingsCatalog
     },
     recentDecisions: previousReports.slice(-7).map((r) => ({
       date: r.createdAt,
       proposals: (r.proposals || []).map((p) => ({ target: p.target, reason: p.reason, status: p.status }))
     }))
   }
-  const res = await fetch(process.env.TRIO_MCP_ANTHROPIC_URL || 'https://api.anthropic.com/v1/messages', {
-    method: 'POST',
-    headers: { 'content-type': 'application/json', 'x-api-key': apiKey, 'anthropic-version': '2023-06-01' },
-    body: JSON.stringify({
-      model,
-      max_tokens: 8000,
-      system: SYSTEM_PROMPT,
-      tools: [ANALYSIS_TOOL],
-      tool_choice: { type: 'tool', name: 'submit_analysis' },
-      messages: [{ role: 'user', content: 'Analysiere bitte meine Trio-Daten:\n\n' + JSON.stringify(payload) }]
-    })
+  const tool = structuredClone(ANALYSIS_TOOL)
+  tool.input_schema.properties.proposals.items.properties.target.enum = proposalTargets(state)
+  const result = await requestToolResult({
+    config, system: SYSTEM_PROMPT, tool,
+    prompt: 'Analysiere bitte meine Trio-Daten:\n\n' + JSON.stringify(payload)
   })
-  const body = await res.json().catch(() => ({}))
-  if (!res.ok) throw new Error(`Claude API ${res.status}: ${JSON.stringify(body).slice(0, 300)}`)
-  const block = (body.content || []).find((b) => b.type === 'tool_use')
-  if (!block) throw new Error('Claude returned no analysis')
-  return { ...block.input, model: body.model, usage: body.usage }
+  return { ...validateAnalysisResult(result.input, state), provider: result.provider, model: result.model, usage: result.usage }
+}
+
+export async function runClaudeAnalysis({ apiKey, model, state, stats, previousReports = [] }) {
+  return runAIAnalysis({ config: { provider: 'anthropic', providers: { anthropic: { apiKey, model } } }, state, stats, previousReports })
 }

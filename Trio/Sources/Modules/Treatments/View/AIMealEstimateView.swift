@@ -1,3 +1,4 @@
+import Foundation
 import PhotosUI
 import Security
 import SwiftUI
@@ -5,7 +6,7 @@ import UIKit
 
 // MARK: - Result model
 
-/// Nutrition estimate returned by Claude for a meal photo.
+/// Nutrition estimate returned by the selected AI provider for a meal photo.
 /// The values are ONLY used to pre-fill the carb entry form. Nothing is logged
 /// or dosed until the user reviews the values and confirms in Trio as usual.
 struct AIMealEstimate: Decodable, Equatable {
@@ -32,78 +33,183 @@ struct AIMealEstimate: Decodable, Equatable {
     }
 }
 
-// MARK: - API key / settings storage (Keychain)
+// MARK: - Provider configuration
 
-enum ClaudeSettingsStore {
-    private static let service = "org.nightscout.trio.claude"
-    private static let keyAccount = "anthropic_api_key"
-    private static let modelDefaultsKey = "claude.meal.model"
-    static let defaultModel = "claude-sonnet-4-5"
+enum AIMealProvider: String, CaseIterable, Identifiable {
+    case anthropic
+    case openAI = "openai"
+    case openAICompatible = "openai-compatible"
 
-    static var model: String {
-        get {
-            let stored = UserDefaults.standard.string(forKey: modelDefaultsKey)?
-                .trimmingCharacters(in: .whitespacesAndNewlines)
-            return (stored?.isEmpty == false) ? stored! : defaultModel
+    var id: String { rawValue }
+    var displayName: String {
+        switch self {
+        case .anthropic: return "Anthropic (Claude)"
+        case .openAI: return "OpenAI"
+        case .openAICompatible: return "OpenAI-kompatibel"
         }
-        set { UserDefaults.standard.set(newValue, forKey: modelDefaultsKey) }
+    }
+}
+
+struct AIMealConfiguration: Equatable {
+    let provider: AIMealProvider
+    let model: String
+    let baseURL: String
+
+    func endpoint() throws -> URL {
+        switch provider {
+        case .anthropic: return URL(string: "https://api.anthropic.com/v1/messages")!
+        case .openAI: return URL(string: "https://api.openai.com/v1/responses")!
+        case .openAICompatible:
+            return try Self.normalizedBaseURL(baseURL).appendingPathComponent("chat/completions")
+        }
     }
 
-    static var apiKey: String? {
+    static func normalizedBaseURL(_ value: String) throws -> URL {
+        guard var parts = URLComponents(string: value.trimmingCharacters(in: .whitespacesAndNewlines)),
+              let scheme = parts.scheme?.lowercased(),
+              let host = parts.host?.lowercased(), !host.isEmpty,
+              parts.user == nil, parts.password == nil, parts.query == nil, parts.fragment == nil,
+              parts.port.map({ (1 ... 65535).contains($0) }) ?? true
+        else { throw AIMealError.invalidURL }
+        let loopback = ["localhost", "127.0.0.1", "::1", "[::1]"].contains(host)
+        guard scheme == "https" || (scheme == "http" && loopback) else { throw AIMealError.invalidURL }
+        parts.scheme = scheme
+        parts.host = host
+        if (scheme == "https" && parts.port == 443) || (scheme == "http" && parts.port == 80) { parts.port = nil }
+        while parts.percentEncodedPath.hasSuffix("/") { parts.percentEncodedPath.removeLast() }
+        guard let url = parts.url else { throw AIMealError.invalidURL }
+        return url
+    }
+}
+
+// MARK: - Settings and endpoint-bound Keychain credentials
+
+enum AIMealSettingsStore {
+    static let legacyDefaultModel = "claude-sonnet-4-5"
+
+    static var provider: AIMealProvider {
+        get { provider(defaults: .standard) }
+        set { UserDefaults.standard.set(newValue.rawValue, forKey: "ai.meal.provider") }
+    }
+
+    static func provider(defaults: UserDefaults) -> AIMealProvider {
+        AIMealProvider(rawValue: defaults.string(forKey: "ai.meal.provider") ?? "") ?? .anthropic
+    }
+
+    static var customBaseURL: String {
+        get { UserDefaults.standard.string(forKey: "ai.meal.customBaseURL") ?? "" }
+        set { UserDefaults.standard.set(newValue.trimmingCharacters(in: .whitespacesAndNewlines), forKey: "ai.meal.customBaseURL") }
+    }
+
+    static func modelDefaultsKey(for provider: AIMealProvider) -> String {
+        provider == .anthropic ? "claude.meal.model" : "ai.meal.\(provider.rawValue).model"
+    }
+
+    static func model(for provider: AIMealProvider, defaults: UserDefaults = .standard) -> String {
+        let value = defaults.string(forKey: modelDefaultsKey(for: provider))?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        return value.isEmpty && provider == .anthropic ? legacyDefaultModel : value
+    }
+
+    static func setModel(_ value: String, for provider: AIMealProvider) {
+        UserDefaults.standard.set(value.trimmingCharacters(in: .whitespacesAndNewlines), forKey: modelDefaultsKey(for: provider))
+    }
+
+    static var currentConfiguration: AIMealConfiguration {
+        let selected = provider
+        return AIMealConfiguration(provider: selected, model: model(for: selected), baseURL: customBaseURL)
+    }
+
+    /// Anthropic keeps its original identity; compatible credentials belong to one complete endpoint.
+    static func credentialIdentity(for provider: AIMealProvider, baseURL: String = "") throws -> (service: String, account: String) {
+        switch provider {
+        case .anthropic: return ("org.nightscout.trio.claude", "anthropic_api_key")
+        case .openAI: return ("org.nightscout.trio.ai.meal", "openai_api_key")
+        case .openAICompatible:
+            let endpoint = try AIMealConfiguration.normalizedBaseURL(baseURL).appendingPathComponent("chat/completions")
+            return ("org.nightscout.trio.ai.meal", "compatible:\(endpoint.absoluteString)")
+        }
+    }
+
+    static func apiKey(for provider: AIMealProvider, baseURL: String = "") -> String? {
+        guard let identity = try? credentialIdentity(for: provider, baseURL: baseURL) else { return nil }
         let query: [String: Any] = [
             kSecClass as String: kSecClassGenericPassword,
-            kSecAttrService as String: service,
-            kSecAttrAccount as String: keyAccount,
+            kSecAttrService as String: identity.service,
+            kSecAttrAccount as String: identity.account,
             kSecReturnData as String: true,
             kSecMatchLimit as String: kSecMatchLimitOne
         ]
         var item: CFTypeRef?
         guard SecItemCopyMatching(query as CFDictionary, &item) == errSecSuccess,
               let data = item as? Data,
-              let key = String(data: data, encoding: .utf8),
-              !key.isEmpty
+              let key = String(data: data, encoding: .utf8), !key.isEmpty
         else { return nil }
         return key
     }
 
-    @discardableResult static func setAPIKey(_ key: String?) -> Bool {
-        let base: [String: Any] = [
+    @discardableResult static func setAPIKey(_ key: String?, for provider: AIMealProvider, baseURL: String = "") -> Bool {
+        guard let identity = try? credentialIdentity(for: provider, baseURL: baseURL) else { return false }
+        let query: [String: Any] = [
             kSecClass as String: kSecClassGenericPassword,
-            kSecAttrService as String: service,
-            kSecAttrAccount as String: keyAccount
+            kSecAttrService as String: identity.service,
+            kSecAttrAccount as String: identity.account
         ]
-        SecItemDelete(base as CFDictionary)
-        guard let key = key?.trimmingCharacters(in: .whitespacesAndNewlines), !key.isEmpty else { return true }
-        var add = base
-        add[kSecValueData as String] = Data(key.utf8)
+        guard let key = key?.trimmingCharacters(in: .whitespacesAndNewlines), !key.isEmpty else {
+            let status = SecItemDelete(query as CFDictionary)
+            return status == errSecSuccess || status == errSecItemNotFound
+        }
+        let attributes: [String: Any] = [kSecValueData as String: Data(key.utf8)]
+        let update = SecItemUpdate(query as CFDictionary, attributes as CFDictionary)
+        if update == errSecSuccess { return true }
+        guard update == errSecItemNotFound else { return false }
+        var add = query.merging(attributes) { _, new in new }
         add[kSecAttrAccessible as String] = kSecAttrAccessibleAfterFirstUnlockThisDeviceOnly
         return SecItemAdd(add as CFDictionary, nil) == errSecSuccess
     }
 }
 
-// MARK: - Claude API client
+/// Retains existing Anthropic settings and credentials for users upgrading from the Claude-only version.
+enum ClaudeSettingsStore {
+    static let defaultModel = AIMealSettingsStore.legacyDefaultModel
+    static var model: String {
+        get { AIMealSettingsStore.model(for: .anthropic) }
+        set { AIMealSettingsStore.setModel(newValue, for: .anthropic) }
+    }
+    static var apiKey: String? { AIMealSettingsStore.apiKey(for: .anthropic) }
+    @discardableResult static func setAPIKey(_ key: String?) -> Bool {
+        AIMealSettingsStore.setAPIKey(key, for: .anthropic)
+    }
+}
 
-enum ClaudeMealError: LocalizedError {
+// MARK: - Provider API client
+
+enum AIMealError: LocalizedError {
     case missingAPIKey
+    case missingModel
+    case invalidURL
+    case keychain
     case imageEncoding
-    case http(Int, String)
+    case http(Int)
     case emptyResponse
-    case unparsable(String)
+    case incompleteResponse
+    case unparsable
 
     var errorDescription: String? {
         switch self {
-        case .missingAPIKey: return "Kein Anthropic API-Key hinterlegt."
+        case .missingAPIKey: return "Für diesen Anbieter und Endpunkt ist kein API-Key hinterlegt."
+        case .missingModel: return "Bitte eine Modell-ID mit Bildverständnis eintragen."
+        case .invalidURL: return "Bitte eine gültige HTTPS-Basis-URL ohne Zugangsdaten, Query oder Fragment eintragen. HTTP ist nur für localhost erlaubt."
+        case .keychain: return "Der API-Key konnte nicht im Schlüsselbund gespeichert werden."
         case .imageEncoding: return "Das Foto konnte nicht verarbeitet werden."
-        case let .http(code, body): return "Claude-API Fehler \(code): \(body.prefix(300))"
-        case .emptyResponse: return "Claude hat keine Antwort geliefert."
-        case let .unparsable(text): return "Antwort nicht lesbar: \(text.prefix(300))"
+        case let .http(code): return "KI-API Fehler \(code)."
+        case .emptyResponse: return "Der KI-Anbieter hat keine auswertbare Antwort geliefert."
+        case .incompleteResponse: return "Die KI-Antwort wurde nicht vollständig abgeschlossen. Bitte erneut versuchen."
+        case .unparsable: return "Die KI-Antwort enthält keine gültige Nährwertschätzung."
         }
     }
 }
 
-enum ClaudeMealService {
-    private static let endpoint = URL(string: "https://api.anthropic.com/v1/messages")!
-
+enum AIMealService {
     private static let systemPrompt = """
     You are a nutrition estimation assistant for a person with type 1 diabetes. \
     Estimate the macronutrients of the meal in the photo as accurately as possible. \
@@ -120,69 +226,121 @@ enum ClaudeMealService {
     "short_note" is a max 20 character German label for the meal, may start with one emoji.
     """
 
-    static func estimate(image: UIImage, userHint: String) async throws -> AIMealEstimate {
-        guard let apiKey = ClaudeSettingsStore.apiKey else { throw ClaudeMealError.missingAPIKey }
-        guard let jpeg = downscaled(image, maxDimension: 1280).jpegData(compressionQuality: 0.8)
-        else { throw ClaudeMealError.imageEncoding }
-
-        var text = "Schätze die Nährwerte dieser Mahlzeit."
+    static func makeRequest(configuration: AIMealConfiguration, apiKey: String?, jpeg: Data, userHint: String) throws -> URLRequest {
+        let endpoint = try configuration.endpoint()
+        let model = configuration.model.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !model.isEmpty else { throw AIMealError.missingModel }
+        let key = apiKey?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        guard configuration.provider == .openAICompatible || !key.isEmpty else {
+            throw AIMealError.missingAPIKey
+        }
+        guard !jpeg.isEmpty else { throw AIMealError.imageEncoding }
+        var prompt = "Schätze die Nährwerte dieser Mahlzeit."
         let hint = userHint.trimmingCharacters(in: .whitespacesAndNewlines)
-        if !hint.isEmpty { text += " Zusätzliche Info vom Nutzer: \(hint)" }
-
-        let body: [String: Any] = [
-            "model": ClaudeSettingsStore.model,
-            "max_tokens": 1024,
-            "system": systemPrompt,
-            "messages": [[
-                "role": "user",
-                "content": [
-                    ["type": "image", "source": [
-                        "type": "base64",
-                        "media_type": "image/jpeg",
-                        "data": jpeg.base64EncodedString()
-                    ]],
-                    ["type": "text", "text": text]
+        if !hint.isEmpty { prompt += " Zusätzliche Info vom Nutzer: \(hint)" }
+        let image = jpeg.base64EncodedString()
+        var body: [String: Any]
+        switch configuration.provider {
+        case .anthropic:
+            body = [
+                "model": model, "max_tokens": 1024, "system": systemPrompt,
+                "messages": [["role": "user", "content": [
+                    ["type": "image", "source": ["type": "base64", "media_type": "image/jpeg", "data": image]],
+                    ["type": "text", "text": prompt]
+                ]]]
+            ]
+        case .openAI:
+            body = [
+                "model": model, "instructions": systemPrompt, "store": false, "max_output_tokens": 4096,
+                "input": [["role": "user", "content": [
+                    ["type": "input_text", "text": prompt],
+                    ["type": "input_image", "image_url": "data:image/jpeg;base64,\(image)"]
+                ]]]
+            ]
+        case .openAICompatible:
+            body = [
+                "model": model, "max_tokens": 1024,
+                "messages": [
+                    ["role": "system", "content": systemPrompt],
+                    ["role": "user", "content": [
+                        ["type": "text", "text": prompt],
+                        ["type": "image_url", "image_url": ["url": "data:image/jpeg;base64,\(image)"]]
+                    ]]
                 ]
-            ]]
-        ]
-
+            ]
+        }
         var request = URLRequest(url: endpoint)
         request.httpMethod = "POST"
         request.timeoutInterval = 60
-        request.setValue("application/json", forHTTPHeaderField: "content-type")
-        request.setValue(apiKey, forHTTPHeaderField: "x-api-key")
-        request.setValue("2023-06-01", forHTTPHeaderField: "anthropic-version")
+        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        if configuration.provider == .anthropic {
+            request.setValue(key, forHTTPHeaderField: "x-api-key")
+            request.setValue("2023-06-01", forHTTPHeaderField: "anthropic-version")
+        } else if !key.isEmpty {
+            request.setValue("Bearer \(key)", forHTTPHeaderField: "Authorization")
+        }
         request.httpBody = try JSONSerialization.data(withJSONObject: body)
+        return request
+    }
 
-        let (data, response) = try await URLSession.shared.data(for: request)
-        let status = (response as? HTTPURLResponse)?.statusCode ?? 0
+    static func parseResponse(_ data: Data, status: Int, provider: AIMealProvider) throws -> AIMealEstimate {
+        let object = (try? JSONSerialization.jsonObject(with: data)) as? [String: Any]
         guard (200 ..< 300).contains(status) else {
-            throw ClaudeMealError.http(status, String(data: data, encoding: .utf8) ?? "")
+            throw AIMealError.http(status)
         }
-
-        struct APIResponse: Decodable {
-            struct Block: Decodable { let type: String; let text: String? }
-            let content: [Block]
+        guard let object else { throw AIMealError.unparsable }
+        let answer: String
+        switch provider {
+        case .anthropic:
+            if object["stop_reason"] as? String == "max_tokens" { throw AIMealError.incompleteResponse }
+            let blocks = object["content"] as? [[String: Any]] ?? []
+            answer = blocks.filter { $0["type"] as? String == "text" }.compactMap { $0["text"] as? String }.joined()
+        case .openAI:
+            guard object["status"] as? String == "completed" else { throw AIMealError.incompleteResponse }
+            let output = object["output"] as? [[String: Any]] ?? []
+            answer = output.filter { $0["type"] as? String == "message" }
+                .flatMap { $0["content"] as? [[String: Any]] ?? [] }
+                .filter { $0["type"] as? String == "output_text" }
+                .compactMap { $0["text"] as? String }.joined()
+        case .openAICompatible:
+            let choice = (object["choices"] as? [[String: Any]])?.first
+            if choice?["finish_reason"] as? String == "length" { throw AIMealError.incompleteResponse }
+            answer = (choice?["message"] as? [String: Any])?["content"] as? String ?? ""
         }
-        let decoded = try JSONDecoder().decode(APIResponse.self, from: data)
-        let answer = decoded.content.compactMap(\.text).joined()
-        guard !answer.isEmpty else { throw ClaudeMealError.emptyResponse }
+        guard !answer.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { throw AIMealError.emptyResponse }
         return try parse(answer)
     }
 
     static func parse(_ answer: String) throws -> AIMealEstimate {
         guard let start = answer.firstIndex(of: "{"), let end = answer.lastIndex(of: "}"), start < end,
-              let json = String(answer[start ... end]).data(using: .utf8)
-        else { throw ClaudeMealError.unparsable(answer) }
-        do {
-            let estimate = try JSONDecoder().decode(AIMealEstimate.self, from: json)
-            // Sanity: reject negative / absurd values
-            guard [estimate.carbs, estimate.fat, estimate.protein].allSatisfy({ $0 >= 0 && $0 < 1000 })
-            else { throw ClaudeMealError.unparsable(answer) }
-            return estimate
-        } catch {
-            throw ClaudeMealError.unparsable(answer)
-        }
+              let json = String(answer[start ... end]).data(using: .utf8),
+              let estimate = try? JSONDecoder().decode(AIMealEstimate.self, from: json)
+        else { throw AIMealError.unparsable }
+        func valid(_ value: Double, limit: Double = 1000) -> Bool { value.isFinite && value >= 0 && value < limit }
+        guard [estimate.carbs, estimate.fat, estimate.protein].allSatisfy({ valid($0) }),
+              estimate.items.allSatisfy({ item in
+                  valid(item.carbs) && (item.fat.map { valid($0) } ?? true)
+                      && (item.protein.map { valid($0) } ?? true)
+                      && (item.grams.map { valid($0, limit: 10000) } ?? true)
+              })
+        else { throw AIMealError.unparsable }
+        return estimate
+    }
+
+    static func estimate(image: UIImage, userHint: String) async throws -> AIMealEstimate {
+        let configuration = AIMealSettingsStore.currentConfiguration
+        guard let jpeg = downscaled(image, maxDimension: 1280).jpegData(compressionQuality: 0.8)
+        else { throw AIMealError.imageEncoding }
+        let request = try makeRequest(
+            configuration: configuration,
+            apiKey: AIMealSettingsStore.apiKey(for: configuration.provider, baseURL: configuration.baseURL),
+            jpeg: jpeg,
+            userHint: userHint
+        )
+        let session = URLSession(configuration: .ephemeral, delegate: AIMealRedirectDelegate(), delegateQueue: nil)
+        defer { session.invalidateAndCancel() }
+        let (data, response) = try await session.data(for: request)
+        return try parseResponse(data, status: (response as? HTTPURLResponse)?.statusCode ?? 0, provider: configuration.provider)
     }
 
     private static func downscaled(_ image: UIImage, maxDimension: CGFloat) -> UIImage {
@@ -194,6 +352,125 @@ enum ClaudeMealService {
         format.scale = 1
         return UIGraphicsImageRenderer(size: newSize, format: format).image { _ in
             image.draw(in: CGRect(origin: .zero, size: newSize))
+        }
+    }
+}
+
+/// Credentials and meal photos must stay at the configured endpoint, including on HTTP redirects.
+private final class AIMealRedirectDelegate: NSObject, URLSessionTaskDelegate {
+    func urlSession(
+        _: URLSession,
+        task _: URLSessionTask,
+        willPerformHTTPRedirection _: HTTPURLResponse,
+        newRequest _: URLRequest,
+        completionHandler: @escaping (URLRequest?) -> Void
+    ) {
+        completionHandler(nil)
+    }
+}
+
+// MARK: - Reusable meal-provider settings
+
+struct AIMealSettingsView: View {
+    @State private var provider = AIMealSettingsStore.provider
+    @State private var modelInput = AIMealSettingsStore.model(for: AIMealSettingsStore.provider)
+    @State private var baseURLInput = AIMealSettingsStore.customBaseURL
+    @State private var apiKeyInput = ""
+    @State private var hasKey = false
+    @State private var message: String?
+    @State private var saveFailed = false
+
+    var body: some View {
+        Form {
+            Section {
+                Picker("Anbieter", selection: $provider) {
+                    ForEach(AIMealProvider.allCases) { provider in
+                        Text(provider.displayName).tag(provider)
+                    }
+                }
+                .onChange(of: provider) { _, value in
+                    modelInput = AIMealSettingsStore.model(for: value)
+                    apiKeyInput = ""
+                    message = nil
+                    refreshKeyStatus()
+                }
+                if provider == .openAICompatible {
+                    TextField("Basis-URL, z.B. https://anbieter.example/v1", text: $baseURLInput)
+                        .keyboardType(.URL)
+                        .textInputAutocapitalization(.never)
+                        .autocorrectionDisabled()
+                        .onChange(of: baseURLInput) { _, _ in
+                            apiKeyInput = ""
+                            message = nil
+                            refreshKeyStatus()
+                        }
+                }
+                TextField("Modell-ID mit Bildverständnis", text: $modelInput)
+                    .textInputAutocapitalization(.never)
+                    .autocorrectionDisabled()
+                SecureField(
+                    hasKey ? "API-Key gespeichert – neu eingeben zum Ändern"
+                        : (provider == .openAICompatible ? "API-Key (optional)" : "API-Key"),
+                    text: $apiKeyInput
+                )
+                    .textInputAutocapitalization(.never)
+                    .autocorrectionDisabled()
+                Button("Speichern") { save() }
+                if hasKey {
+                    Button("API-Key für diesen Anbieter löschen", role: .destructive) {
+                        if AIMealSettingsStore.setAPIKey(nil, for: provider, baseURL: baseURLInput) {
+                            apiKeyInput = ""
+                            refreshKeyStatus()
+                            message = "API-Key gelöscht."
+                            saveFailed = false
+                        } else {
+                            message = AIMealError.keychain.localizedDescription
+                            saveFailed = true
+                        }
+                    }
+                }
+                if let message {
+                    Text(message).font(.footnote).foregroundStyle(saveFailed ? .red : .secondary)
+                }
+            } header: {
+                Text("KI-Mahlzeiten")
+            } footer: {
+                Text("Der API-Key bleibt im Schlüsselbund dieses iPhones. Beim Schätzen werden Foto und Hinweis an den gewählten Anbieter gesendet. Für OpenAI-kompatible Dienste muss das Modell Bilder unterstützen; der Key ist an die eingetragene Basis-URL gebunden.")
+            }
+        }
+        .navigationTitle("KI-Mahlzeiten")
+        .navigationBarTitleDisplayMode(.inline)
+        .onAppear { refreshKeyStatus() }
+    }
+
+    private func refreshKeyStatus() {
+        hasKey = AIMealSettingsStore.apiKey(for: provider, baseURL: baseURLInput) != nil
+    }
+
+    private func save() {
+        do {
+            let model = modelInput.trimmingCharacters(in: .whitespacesAndNewlines)
+            guard !model.isEmpty else { throw AIMealError.missingModel }
+            let configuration = AIMealConfiguration(provider: provider, model: model, baseURL: baseURLInput)
+            _ = try configuration.endpoint()
+            if !apiKeyInput.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                guard AIMealSettingsStore.setAPIKey(apiKeyInput, for: provider, baseURL: baseURLInput) else {
+                    throw AIMealError.keychain
+                }
+            }
+            AIMealSettingsStore.setModel(model, for: provider)
+            if provider == .openAICompatible {
+                AIMealSettingsStore.customBaseURL = try AIMealConfiguration.normalizedBaseURL(baseURLInput).absoluteString
+            }
+            AIMealSettingsStore.provider = provider
+            apiKeyInput = ""
+            refreshKeyStatus()
+            message = hasKey || provider == .openAICompatible
+                ? "Gespeichert." : "Gespeichert. Bitte noch einen API-Key für diesen Anbieter hinterlegen."
+            saveFailed = false
+        } catch {
+            message = error.localizedDescription
+            saveFailed = true
         }
     }
 }
@@ -233,7 +510,7 @@ struct CameraPicker: UIViewControllerRepresentable {
 
 // MARK: - Sheet
 
-/// Photo -> Claude -> editable estimate -> "Übernehmen" pre-fills Trio's carb form.
+/// Photo -> selected AI provider -> editable estimate -> "Übernehmen" pre-fills Trio's carb form.
 struct AIMealEstimateView: View {
     /// Called with (carbs, fat, protein, note) when the user taps "Übernehmen".
     let onApply: (Decimal, Decimal, Decimal, String) -> Void
@@ -253,16 +530,25 @@ struct AIMealEstimateView: View {
     @State private var protein: Double = 0
     @State private var note = ""
 
-    @State private var apiKeyInput = ""
-    @State private var modelInput = ClaudeSettingsStore.model
-    @State private var hasKey = ClaudeSettingsStore.apiKey != nil
+    @State private var configuration = AIMealSettingsStore.currentConfiguration
+    @State private var hasKey = AIMealSettingsStore.apiKey(
+        for: AIMealSettingsStore.provider, baseURL: AIMealSettingsStore.customBaseURL
+    ) != nil
     @State private var showSettings = false
+
+    private var isConfigured: Bool {
+        (hasKey || configuration.provider == .openAICompatible)
+            && !configuration.model.isEmpty && (try? configuration.endpoint()) != nil
+    }
 
     var body: some View {
         NavigationStack {
             Form {
-                if !hasKey || showSettings {
-                    settingsSection
+                Section {
+                    LabeledContent("Anbieter", value: configuration.provider.displayName)
+                    if !isConfigured {
+                        Button("KI-Anbieter einrichten") { showSettings = true }
+                    }
                 }
 
                 Section {
@@ -291,10 +577,10 @@ struct AIMealEstimateView: View {
                     } label: {
                         HStack {
                             if isLoading { ProgressView().padding(.trailing, 6) }
-                            Text(isLoading ? "Claude analysiert …" : "Mit Claude schätzen")
+                            Text(isLoading ? "KI analysiert …" : "Mit KI schätzen")
                         }
                     }
-                    .disabled(image == nil || isLoading || !hasKey)
+                    .disabled(image == nil || isLoading || !isConfigured)
                     if let errorText {
                         Text(errorText).font(.footnote).foregroundStyle(.red)
                     }
@@ -311,13 +597,25 @@ struct AIMealEstimateView: View {
                     Button("Abbrechen") { dismiss() }
                 }
                 ToolbarItem(placement: .primaryAction) {
-                    if hasKey {
-                        Button { showSettings.toggle() } label: { Image(systemName: "gearshape") }
-                    }
+                    Button { showSettings = true } label: { Image(systemName: "gearshape") }
+                        .disabled(isLoading)
                 }
             }
             .sheet(isPresented: $showCamera) {
                 CameraPicker(image: $image).ignoresSafeArea()
+            }
+            .sheet(isPresented: $showSettings, onDismiss: {
+                configuration = AIMealSettingsStore.currentConfiguration
+                hasKey = AIMealSettingsStore.apiKey(for: configuration.provider, baseURL: configuration.baseURL) != nil
+            }) {
+                NavigationStack {
+                    AIMealSettingsView()
+                        .toolbar {
+                            ToolbarItem(placement: .confirmationAction) {
+                                Button("Fertig") { showSettings = false }
+                            }
+                        }
+                }
             }
             .onChange(of: photoItem) { _, item in
                 guard let item else { return }
@@ -333,34 +631,6 @@ struct AIMealEstimateView: View {
                 estimate = nil
                 errorText = nil
             }
-        }
-    }
-
-    private var settingsSection: some View {
-        Section {
-            SecureField(hasKey ? "Neuen API-Key eingeben" : "Anthropic API-Key (sk-ant-…)", text: $apiKeyInput)
-                .textInputAutocapitalization(.never)
-                .autocorrectionDisabled()
-            TextField("Modell", text: $modelInput)
-                .textInputAutocapitalization(.never)
-                .autocorrectionDisabled()
-            Button("Speichern") {
-                if !apiKeyInput.isEmpty { ClaudeSettingsStore.setAPIKey(apiKeyInput) }
-                ClaudeSettingsStore.model = modelInput
-                apiKeyInput = ""
-                hasKey = ClaudeSettingsStore.apiKey != nil
-                showSettings = false
-            }
-            if hasKey {
-                Button("API-Key löschen", role: .destructive) {
-                    ClaudeSettingsStore.setAPIKey(nil)
-                    hasKey = false
-                }
-            }
-        } header: {
-            Text("Claude-Verbindung")
-        } footer: {
-            Text("Der Key wird nur in der Schlüsselbund dieses iPhones gespeichert. Fotos werden zur Analyse an die Anthropic-API gesendet.")
         }
     }
 
@@ -427,7 +697,7 @@ struct AIMealEstimateView: View {
         errorText = nil
         defer { isLoading = false }
         do {
-            let result = try await ClaudeMealService.estimate(image: image, userHint: hint)
+            let result = try await AIMealService.estimate(image: image, userHint: hint)
             estimate = result
             carbs = result.carbs.rounded()
             fat = result.fat.rounded()

@@ -100,8 +100,8 @@
 const $ = (id) => document.getElementById(id)
 const esc = (s) => String(s ?? '').replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]))
 const fmt = (v, unit = '') => (v === null || v === undefined ? '–' : v + unit)
-const statusLabel = { pending: 'wartet auf Freigabe', applied: 'übernommen', rejected: 'abgelehnt', failed: 'fehlgeschlagen', cancelled: 'zurückgezogen', blocked: 'blockiert' }
-const targetLabel = { settings: 'Trio-Einstellungen', preferences: 'Algorithmus', basal_profile: 'Basalrate', isf: 'ISF', carb_ratios: 'KH-Faktor', bg_targets: 'Zielbereich' }
+const statusLabel = { pending: 'wartet auf Freigabe', applying: 'iPhone übernimmt – Bestätigung ausstehend', applied: 'übernommen', rejected: 'abgelehnt', failed: 'fehlgeschlagen', cancelled: 'zurückgezogen', blocked: 'blockiert' }
+const targetLabel = { settings: 'Trio-Einstellungen', preferences: 'Algorithmus', basal_profile: 'Basalrate', isf: 'ISF', carb_ratios: 'KH-Faktor', bg_targets: 'Zielbereich', pump_settings: 'Pumpenlimits', glucose_alerts: 'Glukosealarme', device_alerts: 'Gerätealarme', app_preferences: 'App-Einstellungen', ai_meal: 'KI-Mahlzeiten', bridge_config: 'KI-Bridge', nightscout: 'Nightscout', relay_config: 'Tagesanalyse', diagnostics: 'Diagnosedaten', cgm_simulator: 'CGM-Simulator', override_presets: 'Override-Vorlagen', temp_target_presets: 'Zielwert-Vorlagen', meal_presets: 'Mahlzeiten-Vorlagen' }
 let stats = null
 let period = 'last7d'
 
@@ -132,11 +132,11 @@ function renderOverview(o) {
 
   const r = o.latestReport
   if (!r) {
-    $('report').innerHTML = `<div class="card muted">Noch kein Bericht. ${o.analysis.hasKey ? 'Der erste Bericht kommt zur eingestellten Uhrzeit – oder starte ihn unten.' : 'Am Mac zuerst <code>node trio-mcp.mjs set-api-key</code> ausführen.'}</div>`
+    $('report').innerHTML = `<div class="card muted">Noch kein Bericht. ${o.analysis.ready ? 'Der erste Bericht kommt zur eingestellten Uhrzeit – oder starte ihn unten.' : 'Am Mac Anbieter, Modell und Zugangsdaten konfigurieren: <code>node trio-mcp.mjs provider-status</code>.'}</div>`
   } else {
     const findings = (r.findings || []).map((f) => `<div class="card sev-${esc(f.severity)}"><b>${esc(f.title)}</b><div>${esc(f.detail)}</div></div>`).join('')
     const highlights = (r.highlights || []).length ? '<ul style="margin:6px 0 0;padding-left:18px">' + r.highlights.map((h) => `<li>${esc(h)}</li>`).join('') + '</ul>' : ''
-    $('report').innerHTML = `<div class="card summary"><div class="muted" style="margin-bottom:6px">${new Date(r.createdAt).toLocaleString('de-AT', { dateStyle: 'medium', timeStyle: 'short' })} · ${esc(r.model || '')}</div>${markdown(r.summary)}${highlights}</div>${findings}`
+    $('report').innerHTML = `<div class="card summary"><div class="muted" style="margin-bottom:6px">${new Date(r.createdAt).toLocaleString('de-AT', { dateStyle: 'medium', timeStyle: 'short' })} · ${esc(r.provider || 'anthropic')} / ${esc(r.model || '')}</div>${markdown(r.summary)}${highlights}</div>${findings}`
   }
 
   const list = o.proposals || []
@@ -148,13 +148,13 @@ function renderOverview(o) {
         <div style="margin-top:6px">${esc(p.reason)}</div>
         <div class="diff">${esc(proposalDiff(p))}</div>
         ${p.resultMessage ? `<div class="muted" style="margin-top:6px">${esc(p.resultMessage)}</div>` : ''}
-        <div class="muted" style="margin-top:4px">${p.origin === 'daily-analysis' ? 'Tagesanalyse' : 'Claude-Chat'} · ${ago(p.createdAt)}</div>
+        <div class="muted" style="margin-top:4px">${p.origin === 'daily-analysis' ? 'Tagesanalyse' : 'KI-Chat'} · ${ago(p.createdAt)}</div>
       </div>`).join('')
     : '<div class="card muted">Keine Vorschläge.</div>'
 
   const a = o.analysis
-  $('analysisInfo').innerHTML = `Täglich um <b>${esc(a.time)}</b> · Modell ${esc(a.model)} · ${a.hasKey ? 'API-Key hinterlegt' : '<span class="err">kein API-Key</span>'}${a.lastError ? `<br><span class="err">Letzter Fehler: ${esc(a.lastError)}</span>` : ''}`
-  $('run').disabled = !a.hasKey || a.running
+  $('analysisInfo').innerHTML = `Täglich um <b>${esc(a.time)}</b> · ${esc(a.provider)} / ${esc(a.model)} · ${a.hasKey ? 'API-Key hinterlegt' : (a.provider === 'openai-compatible' ? 'ohne API-Key' : '<span class="err">kein API-Key</span>')}${a.error ? `<br><span class="err">Konfiguration: ${esc(a.error)}</span>` : ''}${a.lastError ? `<br><span class="err">Letzter Fehler: ${esc(a.lastError)}</span>` : ''}`
+  $('run').disabled = !a.ready || a.running
   $('run').textContent = a.running ? 'Analyse läuft …' : 'Analyse jetzt starten'
 }
 
