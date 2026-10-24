@@ -327,6 +327,7 @@ private func claudeFormat(_ value: Double) -> String {
     private var cancellables = Set<AnyCancellable>()
     private var timer: Timer?
     private var notifiedIDs = Set<String>()
+    private var lastHistoryUpload: Date?
 
     private var settingsManager: SettingsManager? { resolver?.resolve(SettingsManager.self) }
     private var storage: FileStorage? { resolver?.resolve(FileStorage.self) }
@@ -383,7 +384,8 @@ private func claudeFormat(_ value: Double) -> String {
         isSyncing = true
         defer { isSyncing = false }
         do {
-            _ = try await request("/trio/state", method: "POST", body: snapshot())
+            let stateResponse = try await request("/trio/state", method: "POST", body: snapshot())
+            try await uploadHistoryIfNeeded(stateResponse)
             let data = try await request("/trio/proposals?status=pending")
             let proposals = try JSONDecoder().decode([ClaudeProposal].self, from: data)
             pending = proposals
@@ -393,6 +395,110 @@ private func claudeFormat(_ value: Double) -> String {
         } catch {
             lastError = error.localizedDescription
         }
+    }
+
+    // MARK: History (up to 30 days, incremental)
+
+    private func uploadHistoryIfNeeded(_ stateResponse: Data) async throws {
+        if let last = lastHistoryUpload, Date().timeIntervalSince(last) < 15 * 60 { return }
+        struct StateResponse: Decodable { let historyThrough: String? }
+        let response = try? JSONDecoder().decode(StateResponse.self, from: stateResponse)
+        let earliest = Date().addingTimeInterval(-30 * 24 * 3600)
+        var since = earliest
+        if let through = response?.historyThrough, let date = ISO8601DateFormatter().date(from: through) {
+            since = max(earliest, date.addingTimeInterval(-2 * 3600))
+        }
+        let context = CoreDataStack.shared.newTaskContext()
+        let payload: [String: Any] = await context.perform {
+            ClaudeBridgeService.collectHistory(since: since, context: context)
+        }
+        _ = try await request("/trio/history", method: "POST", body: payload)
+        lastHistoryUpload = Date()
+    }
+
+    nonisolated static func collectHistory(since: Date, context: NSManagedObjectContext) -> [String: Any] {
+        let iso = ISO8601DateFormatter()
+
+        func fetch(_ entity: String, _ dateKey: String) -> [NSManagedObject] {
+            let request = NSFetchRequest<NSManagedObject>(entityName: entity)
+            request.predicate = NSPredicate(format: "%K > %@", dateKey, since as NSDate)
+            request.sortDescriptors = [NSSortDescriptor(key: dateKey, ascending: true)]
+            request.fetchLimit = 20000
+            return (try? context.fetch(request)) ?? []
+        }
+        func num(_ object: NSManagedObject?, _ key: String) -> Double? {
+            (object?.value(forKey: key) as? NSNumber)?.doubleValue
+        }
+        func flag(_ object: NSManagedObject?, _ key: String) -> Bool {
+            (object?.value(forKey: key) as? NSNumber)?.boolValue ?? false
+        }
+        func time(_ object: NSManagedObject, _ key: String) -> String? {
+            (object.value(forKey: key) as? Date).map { iso.string(from: $0) }
+        }
+
+        let glucose: [[String: Any]] = fetch("GlucoseStored", "date").compactMap { object in
+            guard let t = time(object, "date"), let value = num(object, "glucose") else { return nil }
+            return ["t": t, "v": value, "d": object.value(forKey: "direction") as? String ?? ""]
+        }
+        let carbs: [[String: Any]] = fetch("CarbEntryStored", "date").compactMap { object in
+            guard let t = time(object, "date") else { return nil }
+            return [
+                "t": t,
+                "c": num(object, "carbs") ?? 0,
+                "f": num(object, "fat") ?? 0,
+                "p": num(object, "protein") ?? 0,
+                "fpu": flag(object, "isFPU"),
+                "note": object.value(forKey: "note") as? String ?? ""
+            ]
+        }
+        var boluses: [[String: Any]] = []
+        var tempBasals: [[String: Any]] = []
+        for event in fetch("PumpEventStored", "timestamp") {
+            guard let t = time(event, "timestamp") else { continue }
+            if let bolus = event.value(forKey: "bolus") as? NSManagedObject {
+                boluses.append([
+                    "t": t,
+                    "u": num(bolus, "amount") ?? 0,
+                    "smb": flag(bolus, "isSMB"),
+                    "ext": flag(bolus, "isExternal")
+                ])
+            }
+            if let temp = event.value(forKey: "tempBasal") as? NSManagedObject {
+                tempBasals.append(["t": t, "rate": num(temp, "rate") ?? 0, "min": num(temp, "duration") ?? 0])
+            }
+        }
+        let determinations: [[String: Any]] = fetch("OrefDetermination", "deliverAt").compactMap { object in
+            guard let t = time(object, "deliverAt") else { return nil }
+            var entry: [String: Any] = ["t": t, "enacted": flag(object, "enacted")]
+            for (short, key) in [
+                ("bg", "glucose"), ("iob", "iob"), ("cob", "cob"), ("isf", "insulinSensitivity"),
+                ("cr", "carbRatio"), ("sens", "sensitivityRatio"), ("target", "currentTarget"),
+                ("eventual", "eventualBG"), ("rate", "rate"), ("smb", "smbToDeliver"),
+                ("basal", "scheduledBasal"), ("req", "insulinReq")
+            ] {
+                if let value = num(object, key) { entry[short] = value }
+            }
+            return entry
+        }
+        let tdd: [[String: Any]] = fetch("TDDStored", "date").compactMap { object in
+            guard let t = time(object, "date") else { return nil }
+            return [
+                "t": t,
+                "total": num(object, "total") ?? 0,
+                "bolus": num(object, "bolus") ?? 0,
+                "temp": num(object, "tempBasal") ?? 0,
+                "scheduled": num(object, "scheduledBasal") ?? 0
+            ]
+        }
+        return [
+            "since": iso.string(from: since),
+            "glucose": glucose,
+            "carbs": carbs,
+            "boluses": boluses,
+            "tempBasals": tempBasals,
+            "determinations": determinations,
+            "tdd": tdd
+        ]
     }
 
     private func notifyAboutNew(_ proposals: [ClaudeProposal]) {
@@ -770,7 +876,7 @@ struct ClaudeBridgeView: View {
             } header: {
                 Text("Verbindung (trio-mcp)")
             } footer: {
-                Text("Trio sendet Einstellungen, Glukose, IOB und COB an deinen trio-mcp-Server, damit Claude sie lesen kann.")
+                Text("Trio sendet Einstellungen, Status und den Verlauf der letzten 30 Tage (Glukose, Insulin, KH, Loop-Entscheidungen) an deinen trio-mcp-Server. Dort erstellt Claude täglich eine Analyse.")
             }
 
             if !bridge.history.isEmpty {

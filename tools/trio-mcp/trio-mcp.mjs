@@ -5,6 +5,11 @@
 //   node trio-mcp.mjs mcp              MCP server over stdio (started by Claude Desktop / Claude Code)
 //   node trio-mcp.mjs info             Print URL + token to enter in Trio
 //   node trio-mcp.mjs install-launchd  Start the relay automatically at login (macOS)
+//   node trio-mcp.mjs set-api-key      Store an Anthropic API key for the daily analysis
+//   node trio-mcp.mjs set-time 07:00   Time of the daily analysis (local time, default 07:00)
+//   node trio-mcp.mjs analyze          Run the analysis now
+//
+// Companion web app: http://<mac-ip>:8765/app?token=<token>  (add to iPhone home screen)
 //
 // Safety model: Claude can read Trio's snapshot and create PROPOSALS. Nothing is changed in Trio
 // until the user reviews the proposal on the iPhone and approves it with Face ID.
@@ -15,12 +20,16 @@ import fs from 'node:fs'
 import http from 'node:http'
 import os from 'node:os'
 import path from 'node:path'
+import readline from 'node:readline'
 import { fileURLToPath } from 'node:url'
+import { checkStepSize, computeStats, historyThrough, mergeHistory, runClaudeAnalysis } from './analysis.mjs'
 
 const HOME = os.homedir()
 const DIR = process.env.TRIO_MCP_DIR || path.join(HOME, '.trio-mcp')
 const CONFIG_FILE = path.join(DIR, 'config.json')
 const DB_FILE = path.join(DIR, 'db.json')
+const HISTORY_FILE = path.join(DIR, 'history.json')
+const APP_FILE = path.join(path.dirname(fileURLToPath(import.meta.url)), 'app.html')
 const SCHEDULE_TARGETS = ['basal_profile', 'isf', 'carb_ratios', 'bg_targets']
 const PATCH_TARGETS = ['settings', 'preferences']
 
@@ -33,12 +42,31 @@ function loadConfig() {
   let changed = false
   if (!config.token) { config.token = randomBytes(24).toString('base64url'); changed = true }
   if (!config.port) { config.port = Number(process.env.TRIO_MCP_PORT) || 8765; changed = true }
-  if (changed) fs.writeFileSync(CONFIG_FILE, JSON.stringify(config, null, 2), { mode: 0o600 })
+  if (!config.analysisTime) { config.analysisTime = '07:00'; changed = true }
+  if (!config.model) { config.model = 'claude-sonnet-4-5'; changed = true }
+  if (changed) saveConfig(config)
   return config
 }
 
+function saveConfig(config) {
+  fs.mkdirSync(DIR, { recursive: true, mode: 0o700 })
+  fs.writeFileSync(CONFIG_FILE, JSON.stringify(config, null, 2), { mode: 0o600 })
+}
+
+function loadHistory() {
+  try { return JSON.parse(fs.readFileSync(HISTORY_FILE, 'utf8')) } catch { return {} }
+}
+
+function saveHistory(history) {
+  const tmp = HISTORY_FILE + '.tmp'
+  fs.writeFileSync(tmp, JSON.stringify(history), { mode: 0o600 })
+  fs.renameSync(tmp, HISTORY_FILE)
+}
+
 function loadDB() {
-  try { return JSON.parse(fs.readFileSync(DB_FILE, 'utf8')) } catch { return { state: null, stateReceivedAt: null, proposals: [] } }
+  let db
+  try { db = JSON.parse(fs.readFileSync(DB_FILE, 'utf8')) } catch { db = {} }
+  return { state: null, stateReceivedAt: null, proposals: [], reports: [], ...db }
 }
 
 function saveDB(db) {
@@ -96,6 +124,103 @@ function validateSchedule(target, schedule) {
   })
 }
 
+function createProposal(db, body, origin = 'claude') {
+  if (PATCH_TARGETS.includes(body.target)) validatePatch(db, body.target, body.patch)
+  else if (SCHEDULE_TARGETS.includes(body.target)) validateSchedule(body.target, body.schedule)
+  else throw new Error(`target must be one of ${[...PATCH_TARGETS, ...SCHEDULE_TARGETS].join(', ')}`)
+  const proposal = {
+    id: randomUUID(),
+    createdAt: new Date().toISOString(),
+    origin,
+    target: body.target,
+    patch: body.patch ?? null,
+    schedule: body.schedule ?? null,
+    reason: String(body.reason || '').slice(0, 800),
+    status: 'pending'
+  }
+  db.proposals.push(proposal)
+  return proposal
+}
+
+// ---------- daily analysis ----------
+
+let analysisRunning = false
+
+async function analyze(trigger = 'manual') {
+  if (analysisRunning) throw new Error('Analysis already running')
+  analysisRunning = true
+  try {
+    const config = loadConfig()
+    if (!config.anthropicApiKey) throw new Error('No Anthropic API key. Run: node trio-mcp.mjs set-api-key')
+    const db = loadDB()
+    if (!db.state) throw new Error('Trio has not synced yet')
+    const stats = computeStats(loadHistory())
+    const result = await runClaudeAnalysis({ apiKey: config.anthropicApiKey, model: config.model, state: db.state, stats, previousReports: db.reports })
+
+    // withdraw older, still pending automatic proposals
+    for (const p of db.proposals) {
+      if (p.status === 'pending' && p.origin === 'daily-analysis') {
+        p.status = 'cancelled'
+        p.resolvedAt = new Date().toISOString()
+        p.resultMessage = 'Durch neue Tagesanalyse ersetzt'
+      }
+    }
+    const proposals = []
+    for (const raw of result.proposals || []) {
+      const body = { target: raw.target, patch: raw.changes ?? null, schedule: raw.schedule ?? null, reason: raw.reason }
+      const guard = checkStepSize(db.state, { target: raw.target, changes: raw.changes, schedule: raw.schedule })
+      if (guard) { proposals.push({ ...body, status: 'blocked', resultMessage: guard }); continue }
+      try {
+        const p = createProposal(db, body, 'daily-analysis')
+        proposals.push({ id: p.id, ...body, status: 'pending' })
+      } catch (e) {
+        proposals.push({ ...body, status: 'blocked', resultMessage: e.message })
+      }
+    }
+    const report = {
+      id: randomUUID(),
+      createdAt: new Date().toISOString(),
+      trigger,
+      model: result.model,
+      summary: result.summary,
+      highlights: result.highlights || [],
+      findings: result.findings || [],
+      proposals,
+      statsHeadline: { coveredDays: stats.coveredDays, overall30d: stats.overall30d, last7d: stats.last7d, avgTdd: stats.avgTdd }
+    }
+    db.reports = [...(db.reports || []), report].slice(-60)
+    db.lastAnalysisDate = new Date().toDateString()
+    db.lastAnalysisError = null
+    saveDB(db)
+    return report
+  } finally {
+    analysisRunning = false
+  }
+}
+
+function startScheduler() {
+  setInterval(() => {
+    const config = loadConfig()
+    if (!config.anthropicApiKey || analysisRunning) return
+    const now = new Date()
+    const [h, m] = String(config.analysisTime || '07:00').split(':').map(Number)
+    const due = now.getHours() > h || (now.getHours() === h && now.getMinutes() >= m)
+    const db = loadDB()
+    if (due && db.lastAnalysisDate !== now.toDateString() && db.state) {
+      analyze('daily').then(
+        (r) => console.error(`Daily analysis done: ${r.proposals.length} proposal(s)`),
+        (e) => {
+          console.error('Daily analysis failed:', e.message)
+          const d = loadDB()
+          d.lastAnalysisDate = now.toDateString()
+          d.lastAnalysisError = e.message
+          saveDB(d)
+        }
+      )
+    }
+  }, 60 * 1000)
+}
+
 // ---------- HTTP relay (serve) ----------
 
 function serve() {
@@ -106,15 +231,27 @@ function serve() {
   }
   const readBody = (req) => new Promise((resolve, reject) => {
     let data = ''
-    req.on('data', (c) => { data += c; if (data.length > 5e6) req.destroy() })
+    req.on('data', (c) => { data += c; if (data.length > 60e6) req.destroy() })
     req.on('end', () => { try { resolve(data ? JSON.parse(data) : {}) } catch (e) { reject(e) } })
     req.on('error', reject)
   })
 
   const server = http.createServer(async (req, res) => {
     try {
-      if ((req.headers.authorization || '') !== `Bearer ${config.token}`) return send(res, 401, { error: 'unauthorized' })
       const url = new URL(req.url, 'http://local')
+      const cookieToken = /(?:^|;\s*)trio_token=([^;]+)/.exec(req.headers.cookie || '')?.[1]
+      const authorized = (req.headers.authorization || '') === `Bearer ${config.token}` ||
+        cookieToken === config.token || url.searchParams.get('token') === config.token
+      if (!authorized) return send(res, 401, { error: 'unauthorized' })
+
+      // --- companion web app ---
+      if (req.method === 'GET' && (url.pathname === '/' || url.pathname === '/app')) {
+        res.writeHead(200, {
+          'Content-Type': 'text/html; charset=utf-8',
+          'Set-Cookie': `trio_token=${config.token}; Path=/; Max-Age=31536000; HttpOnly; SameSite=Strict`
+        })
+        return res.end(fs.readFileSync(APP_FILE, 'utf8'))
+      }
       const parts = url.pathname.split('/').filter(Boolean)
       const db = loadDB()
 
@@ -123,7 +260,13 @@ function serve() {
         db.state = await readBody(req)
         db.stateReceivedAt = new Date().toISOString()
         saveDB(db)
-        return send(res, 200, { ok: true })
+        return send(res, 200, { ok: true, historyThrough: historyThrough(loadHistory()) })
+      }
+      if (req.method === 'POST' && url.pathname === '/trio/history') {
+        const upload = await readBody(req)
+        const merged = mergeHistory(loadHistory(), upload)
+        saveHistory(merged)
+        return send(res, 200, { ok: true, historyThrough: historyThrough(merged), glucose: merged.glucose.length })
       }
       if (req.method === 'GET' && url.pathname === '/trio/proposals') {
         const status = url.searchParams.get('status')
@@ -148,22 +291,29 @@ function serve() {
         return send(res, 200, db.proposals.filter((p) => !status || p.status === status).slice(-50))
       }
       if (req.method === 'POST' && url.pathname === '/api/proposals') {
-        const body = await readBody(req)
-        if (PATCH_TARGETS.includes(body.target)) validatePatch(db, body.target, body.patch)
-        else if (SCHEDULE_TARGETS.includes(body.target)) validateSchedule(body.target, body.schedule)
-        else throw new Error(`target must be one of ${[...PATCH_TARGETS, ...SCHEDULE_TARGETS].join(', ')}`)
-        const proposal = {
-          id: randomUUID(),
-          createdAt: new Date().toISOString(),
-          target: body.target,
-          patch: body.patch ?? null,
-          schedule: body.schedule ?? null,
-          reason: String(body.reason || '').slice(0, 500),
-          status: 'pending'
-        }
-        db.proposals.push(proposal)
+        const proposal = createProposal(db, await readBody(req))
         saveDB(db)
         return send(res, 200, proposal)
+      }
+      if (req.method === 'GET' && url.pathname === '/api/stats') {
+        return send(res, 200, computeStats(loadHistory()))
+      }
+      if (req.method === 'GET' && url.pathname === '/api/reports') {
+        return send(res, 200, (db.reports || []).slice(-30).reverse())
+      }
+      if (req.method === 'GET' && url.pathname === '/api/overview') {
+        const cfg = loadConfig()
+        return send(res, 200, {
+          state: db.state ? { status: db.state.status, units: db.state.units, version: db.state.version, pump: db.state.pump } : null,
+          stateReceivedAt: db.stateReceivedAt,
+          history: { through: historyThrough(loadHistory()) },
+          latestReport: (db.reports || []).at(-1) || null,
+          proposals: db.proposals.slice(-30).reverse(),
+          analysis: { time: cfg.analysisTime, model: cfg.model, hasKey: Boolean(cfg.anthropicApiKey), running: analysisRunning, lastError: db.lastAnalysisError || null }
+        })
+      }
+      if (req.method === 'POST' && url.pathname === '/api/analyze') {
+        return send(res, 200, await analyze('manual'))
       }
       if (req.method === 'POST' && parts[0] === 'api' && parts[1] === 'proposals' && parts[3] === 'cancel') {
         const p = db.proposals.find((x) => x.id === parts[2])
@@ -180,6 +330,7 @@ function serve() {
     }
   })
 
+  startScheduler()
   server.listen(config.port, '0.0.0.0', () => {
     console.error(`trio-mcp relay listening on port ${config.port}`)
     for (const ip of lanAddresses()) console.error(`  Trio URL: http://${ip}:${config.port}`)
@@ -312,6 +463,33 @@ async function mcp() {
     guard(async ({ id }) => text(await api(`/api/proposals/${id}/cancel`, { method: 'POST' })))
   )
 
+  server.tool(
+    'trio_get_history_stats',
+    'Aggregated statistics of the last up to 30 days from Trio: TIR/TBR/TAR, mean, CV, GMI per period and per day, hour-of-day glucose percentiles with loop adjustments (sensitivityRatio, temp basal minus scheduled basal), hypo events, meal responses, TDD. Use this before proposing therapy changes.',
+    { include: z.enum(['summary', 'daily', 'hourly', 'meals', 'all']).default('all') },
+    guard(async ({ include }) => {
+      const stats = await api('/api/stats')
+      if (include === 'all') return text(stats)
+      const head = { coveredDays: stats.coveredDays, overall30d: stats.overall30d, last14d: stats.last14d, last7d: stats.last7d, last24h: stats.last24h, avgTdd: stats.avgTdd, hypoEventCount: stats.hypoEventCount }
+      if (include === 'summary') return text(head)
+      return text({ ...head, [include]: stats[include] })
+    })
+  )
+
+  server.tool(
+    'trio_get_daily_report',
+    'Latest daily AI analysis report(s) created on the Mac, including findings and proposals with their status.',
+    { count: z.number().int().min(1).max(10).default(1) },
+    guard(async ({ count }) => text((await api('/api/reports')).slice(0, count)))
+  )
+
+  server.tool(
+    'trio_run_daily_analysis',
+    'Run the daily analysis now (uses the Anthropic API key configured on the Mac). Creates a report and pending proposals for approval in Trio.',
+    {},
+    guard(async () => text(await api('/api/analyze', { method: 'POST' })))
+  )
+
   await server.connect(new StdioServerTransport())
 }
 
@@ -322,6 +500,8 @@ function info() {
   console.log('Enter this in Trio → Settings → Claude:')
   for (const ip of lanAddresses()) console.log(`  Server: http://${ip}:${config.port}`)
   console.log(`  Token:  ${config.token}`)
+  console.log('Companion web app (open on iPhone, then "Add to Home Screen"):')
+  for (const ip of lanAddresses()) console.log(`  http://${ip}:${config.port}/app?token=${config.token}`)
 }
 
 function installLaunchd() {
@@ -348,12 +528,32 @@ function installLaunchd() {
   info()
 }
 
+async function setApiKey() {
+  const rl = readline.createInterface({ input: process.stdin, output: process.stdout })
+  const key = await new Promise((resolve) => rl.question('Anthropic API key (sk-ant-...): ', resolve))
+  rl.close()
+  const config = loadConfig()
+  config.anthropicApiKey = String(key).trim()
+  saveConfig(config)
+  console.log(config.anthropicApiKey ? 'Saved.' : 'Key removed.')
+}
+
 const command = process.argv[2]
 if (command === 'serve') serve()
+else if (command === 'set-api-key') setApiKey()
+else if (command === 'set-time') {
+  const value = process.argv[3]
+  if (!/^\d{1,2}:\d{2}$/.test(value || '')) { console.error('Usage: set-time HH:MM'); process.exit(1) }
+  const config = loadConfig(); config.analysisTime = value; saveConfig(config); console.log(`Daily analysis at ${value}`)
+}
+else if (command === 'set-model') {
+  const config = loadConfig(); config.model = process.argv[3] || 'claude-sonnet-4-5'; saveConfig(config); console.log(`Model: ${config.model}`)
+}
+else if (command === 'analyze') analyze('cli').then((r) => console.log(JSON.stringify(r, null, 2)), (e) => { console.error(e.message); process.exit(1) })
 else if (command === 'mcp') mcp().catch((e) => { console.error(e); process.exit(1) })
 else if (command === 'info') info()
 else if (command === 'install-launchd') installLaunchd()
 else {
-  console.error('Usage: node trio-mcp.mjs <serve|mcp|info|install-launchd>')
+  console.error('Usage: node trio-mcp.mjs <serve|mcp|info|install-launchd|set-api-key|set-time|set-model|analyze>')
   process.exit(1)
 }
