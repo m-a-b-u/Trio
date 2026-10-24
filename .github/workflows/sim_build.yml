@@ -1,0 +1,82 @@
+name: Simulator Build (unsigned, no secrets)
+
+# Replaces a local Xcode build: compiles the full Trio app for the iOS
+# Simulator on a GitHub macOS runner. No Apple certificates or secrets needed.
+on:
+  workflow_dispatch:
+  push:
+    branches-ignore:
+      - 'alive*'
+    paths-ignore:
+      - '**.md'
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build:
+    name: Build Trio (iOS Simulator)
+    runs-on: macos-26
+    timeout-minutes: 90
+    steps:
+      - name: Select Xcode version
+        run: sudo xcode-select -s /Applications/Xcode_26.2.app/Contents/Developer
+
+      - name: Checkout code
+        uses: actions/checkout@v5
+        with:
+          fetch-depth: 1
+          submodules: recursive
+
+      - name: Capture submodule state for cache key
+        run: git submodule status --recursive | awk '{print $1, $2}' > .submodule-status
+
+      - name: Restore DerivedData
+        uses: actions/cache@v5
+        with:
+          path: ~/Library/Developer/Xcode/DerivedData
+          key: ${{ runner.os }}-simdd-${{ hashFiles('**/Package.resolved', '.submodule-status') }}-${{ github.sha }}
+          restore-keys: |
+            ${{ runner.os }}-simdd-${{ hashFiles('**/Package.resolved', '.submodule-status') }}-
+            ${{ runner.os }}-simdd-
+
+      - name: Cache BuildTools (SwiftFormat)
+        uses: actions/cache@v5
+        with:
+          path: BuildTools/.build
+          key: ${{ runner.os }}-buildtools-${{ hashFiles('BuildTools/Package.swift', 'BuildTools/Package.resolved') }}
+
+      - name: Build
+        run: |
+          set -o pipefail
+          xcodebuild build \
+            -workspace Trio.xcworkspace \
+            -scheme "Trio" \
+            -destination "generic/platform=iOS Simulator" \
+            -skipPackagePluginValidation \
+            -skipMacroValidation \
+            -quiet \
+            COMPILER_INDEX_STORE_ENABLE=NO \
+            CODE_SIGN_IDENTITY="-" \
+            CODE_SIGN_STYLE=Manual \
+            DEVELOPMENT_TEAM="" \
+            PROVISIONING_PROFILE_SPECIFIER="" \
+            | tee xcodebuild.log
+
+      - name: Surface build errors
+        if: failure()
+        run: |
+          grep -nE "error:|Undefined symbol|PhaseScriptExecution failed|BUILD FAILED" xcodebuild.log | tail -n 80 || true
+          { echo '## ❌ Build failed'; echo '```'; grep -E "error:" xcodebuild.log | head -n 40; echo '```'; } >> $GITHUB_STEP_SUMMARY
+
+      - name: Success summary
+        if: success()
+        run: echo "✅ Trio builds for iOS Simulator" >> $GITHUB_STEP_SUMMARY
+
+      - name: Upload build log
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: xcodebuild-log
+          path: xcodebuild.log
