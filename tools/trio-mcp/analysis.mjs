@@ -193,7 +193,7 @@ export function computeStats(history, now = Date.now()) {
   }
 }
 
-// ---------- Claude analysis ----------
+// ---------- AI analysis ----------
 
 const SYSTEM_PROMPT = `Du bist ein sehr vorsichtiger Analyse-Assistent für eine Person mit Typ-1-Diabetes, die das Open-Source-AID-System Trio (oref-Algorithmus) nutzt.
 Du erhältst aggregierte Statistiken der letzten bis zu 30 Tage sowie die aktuellen Trio-Einstellungen.
@@ -207,7 +207,7 @@ Regeln für Vorschläge:
 - Keine Vorschläge, die die Insulinabgabe erhöhen, wenn in demselben Zeitfenster Werte < 70 mg/dL gehäuft vorkommen.
 - Keine Boli, keine Mahlzeiten, keine Änderungen an Pumpen-/Sensor-Konfiguration oder Sicherheitslimits nach oben (maxIOB, maxSMBBasalMinutes, maxDailySafetyMultiplier etc.), außer der Nutzer hat es ausdrücklich gewünscht.
 - Zeitpläne immer vollständig angeben (alle 24 h), Einträge ab 00:00 in 30-Minuten-Schritten, Werte in mg/dL bzw. g/IE bzw. IE/h. Unveränderte Blöcke unverändert übernehmen. Basalraten nur aus supportedBasalRates.
-- Für settings/preferences nur Schlüssel verwenden, die im Snapshot existieren, mit gleichem Typ.
+- Für Einstellungsänderungen nur Ziele und Schlüssel mit access "proposal" im settingsCatalog verwenden; Typ, aktuellen Wert und constraints beachten. Verschachtelte Objekte und Listen vollständig im angegebenen Typ übergeben. Bei älteren Snapshots ohne Katalog sind nur vorhandene settings/preferences-Schlüssel mit gleichem Typ zulässig.
 - In "reason" die Evidenz mit Zahlen nennen (z. B. "an 9 von 14 Tagen zwischen 3 und 6 Uhr Median 165 mg/dL, Loop erhöht dort im Mittel um +0,25 IE/h").
 - Datenqualität prüfen (Lücken, wenige Messwerte, Sensorwechsel) und bei Zweifeln keine Vorschläge machen.
 Wenn nichts geändert werden sollte, gib eine leere proposals-Liste zurück – das ist ein gutes Ergebnis.`
@@ -238,7 +238,7 @@ const ANALYSIS_TOOL = {
           type: 'object',
           properties: {
             target: { type: 'string', enum: ['settings', 'preferences', 'basal_profile', 'isf', 'carb_ratios', 'bg_targets'] },
-            changes: { type: 'object', description: 'Nur für settings/preferences: key → neuer Wert' },
+            changes: { type: 'object', description: 'Für beschreibbare Ziele im settingsCatalog: key → neuer Wert, einschließlich verschachtelter Objekte und Listen. Typ und constraints beachten. Zeitpläne verwenden stattdessen schedule.' },
             schedule: {
               type: 'array',
               description: 'Nur für Zeitpläne: vollständiger 24h-Plan',

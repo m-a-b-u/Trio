@@ -20,7 +20,9 @@ import Testing
         let request = try AIMealService.makeRequest(
             configuration: configuration(provider), apiKey: "synthetic-key", jpeg: Data([1, 2, 3]), userHint: "Testportion"
         )
-        let body = try #require(JSONSerialization.jsonObject(with: #require(request.httpBody)) as? [String: Any])
+        let requestBody = try #require(request.httpBody)
+        let object = try JSONSerialization.jsonObject(with: requestBody)
+        let body = try #require(object as? [String: Any])
         #expect(request.httpMethod == "POST")
         #expect(body["model"] as? String == "test-vision-model")
         switch provider {
