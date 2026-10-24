@@ -103,7 +103,8 @@ automatisch die ChatGPT-Web-App mit einem lokalen stdio-Server.
 ## Einstellungen entdecken und ändern
 
 Zuerst `trio_get_settings_catalog` aufrufen. Der Katalog kommt vom aktuellen iPhone-Snapshot und enthält
-für jeden Eintrag `target`, `key`, `type`, `current`, `constraints` und `access`. Dadurch sieht der
+für jeden Eintrag `target`, `key`, `type` und `access`; schreibbare Einstellungen enthalten außerdem
+`current` und `constraints`. Bei lokalen Aktionen können diese Angaben fehlen. Dadurch sieht der
 Assistent auch zusätzliche Einstellungsbereiche, Arrays und Objekte statt nur skalare Algorithmuswerte.
 
 - `proposal`: über `trio_propose_settings_change` änderbar; anschließend auf dem iPhone prüfen und freigeben.
