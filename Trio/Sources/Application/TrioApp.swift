@@ -87,6 +87,8 @@ extension Notification.Name {
         _ = resolver.resolve(GlucoseAlertCoordinator.self)!
         _ = resolver.resolve(NotLoopingMonitor.self)!
         _ = DeviceAlertsStore.shared
+        let bridgeResolver = resolver
+        Task { @MainActor in ClaudeBridgeService.shared.start(resolver: bridgeResolver) }
         // Last: needs the pump manager's AlertResponder registration and the
         // seeded DeviceAlertsStore in place before re-presenting alerts.
         resolver.resolve(TrioAlertManager.self)!.replayUnacknowledgedAlerts()
