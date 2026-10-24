@@ -20,6 +20,7 @@ extension Treatments {
         @State var state = StateModel()
 
         @State private var showPresetSheet = false
+        @State private var showAIMealSheet = false
         @State private var autofocus: Bool = true
         @State private var calculatorDetent = PresentationDetent.large
         @State private var pushed: Bool = false
@@ -357,6 +358,13 @@ extension Treatments {
                                 carbsTextField()
                                     .id(FocusedField.carbs)
 
+                                Button {
+                                    showAIMealSheet = true
+                                } label: {
+                                    Label("Mahlzeit per Foto schätzen (Claude)", systemImage: "camera.viewfinder")
+                                }
+                                .buttonStyle(.borderless)
+
                                 if state.useFPUconversion {
                                     proteinAndFat()
                                         .id(FocusedField.fat)
@@ -513,6 +521,17 @@ extension Treatments {
             }
             .sheet(isPresented: $state.showInfo) {
                 PopupView(state: state)
+            }
+            .sheet(isPresented: $showAIMealSheet) {
+                AIMealEstimateView { carbs, fat, protein, note in
+                    state.carbs = min(carbs, state.maxCarbs)
+                    if state.useFPUconversion {
+                        state.fat = min(fat, state.maxFat)
+                        state.protein = min(protein, state.maxProtein)
+                    }
+                    if state.note.isEmpty { state.note = note }
+                    handleDebouncedInput()
+                }
             }
             .sheet(isPresented: $showPresetSheet, onDismiss: {
                 showPresetSheet = false
