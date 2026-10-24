@@ -7,6 +7,7 @@
     "trio-mcp": "trio-mcp.mjs"
   },
   "scripts": {
+    "test": "node --test *.test.mjs",
     "serve": "node trio-mcp.mjs serve",
     "mcp": "node trio-mcp.mjs mcp",
     "info": "node trio-mcp.mjs info"

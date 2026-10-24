@@ -58,13 +58,25 @@ node trio-mcp.mjs analyze            # sofort ausführen
 node trio-mcp.mjs info               # zeigt auch den Link zur Web-App
 ```
 
+`analyze` benötigt das laufende Relay. CLI, MCP, Web-App und Scheduler teilen dadurch dieselbe
+Analyse-Sperre; parallele iPhone-Synchronisierungen und Freigaben bleiben während der Analyse erhalten.
+
 **Web-App:** `http://<Mac-IP>:8765/app?token=<Token>` am iPhone in Safari öffnen → Teilen → „Zum Home-Bildschirm“.
 Zeigt Status, Tagesbericht, Vorschläge (mit Status), Zeit im Zielbereich, Tagesprofil, Mahlzeiten und Tagesverlauf.
 
 **Leitplanken der Tagesanalyse:** Vorschläge nur bei Mustern an ≥ 3 Tagen und ≥ 7 Tagen Daten, max. 2 Therapie-
 Vorschläge pro Tag, Basal/ISF/KH-Faktor max. ±10 % pro Schritt (der Server blockiert hart alles über ±20 % bzw.
-Einstellungen über ±30 %), Hypos haben Vorrang. Ältere offene Vorschläge der Tagesanalyse werden beim nächsten Lauf
+Einstellungen über ±30 %, beide Zielbereichsgrenzen werden geprüft), Hypos haben Vorrang. Fehlende Vergleichspläne
+und Änderungen ausgehend von 0 werden blockiert. Mindestens 7 Tage Verlauf mit Messwerten an 7 verschiedenen Tagen
+und höchstens 2 neu erstellte automatische Vorschläge pro Kalendertag werden serverseitig erzwungen; auch
+abgelehnte oder zurückgezogene Vorschläge zählen zum Tageslimit. Die medizinischen Musterregeln bleiben Vorgaben
+an Claude und ersetzen keine persönliche Prüfung. Ältere offene Vorschläge der Tagesanalyse werden beim nächsten Lauf
 zurückgezogen. Jede Änderung braucht weiterhin deine Face-ID-Freigabe in Trio.
+
+## Lokale Tests
+
+`npm test` prüft Relay und Analyse mit synthetischen Daten und einer lokalen API-Attrappe. Es werden keine
+echten Schlüssel oder Gesundheitsdaten benötigt und keine installierten Relay-Daten verändert.
 
 ## Tools
 

@@ -257,7 +257,7 @@ const ANALYSIS_TOOL = {
 }
 
 /// Values of a Trio schedule as [{minutes, value}] for the relative-change guard.
-function currentSchedule(state, target) {
+function currentSchedule(state, target, field = 'low') {
   const toMin = (s) => {
     const [h, m] = String(s).split(':').map(Number)
     return h * 60 + (m || 0)
@@ -265,7 +265,7 @@ function currentSchedule(state, target) {
   if (target === 'basal_profile') return (state.basalProfile || []).map((e) => ({ minutes: e.minutes ?? toMin(e.start), value: e.rate }))
   if (target === 'isf') return (state.isf?.sensitivities || []).map((e) => ({ minutes: e.offset ?? toMin(e.start), value: e.sensitivity }))
   if (target === 'carb_ratios') return (state.carbRatios?.schedule || []).map((e) => ({ minutes: e.offset ?? toMin(e.start), value: e.ratio }))
-  if (target === 'bg_targets') return (state.bgTargets?.targets || []).map((e) => ({ minutes: e.offset ?? toMin(e.start), value: e.low }))
+  if (target === 'bg_targets') return (state.bgTargets?.targets || []).map((e) => ({ minutes: e.offset ?? toMin(e.start), value: e[field] ?? e.low }))
   return []
 }
 
@@ -274,17 +274,23 @@ const valueAt = (list, minute) => [...list].sort((a, b) => a.minutes - b.minutes
 /// Hard guard for automatically generated proposals: no step larger than maxStep relative to the current value.
 export function checkStepSize(state, proposal, maxStep = 0.2) {
   if (proposal.schedule) {
-    const current = currentSchedule(state, proposal.target)
-    if (!current.length) return null
-    const proposed = proposal.schedule.map((e) => {
-      const [h, m] = e.time.split(':').map(Number)
-      return { minutes: h * 60 + m, value: e.value ?? e.low }
-    })
-    for (let minute = 0; minute < 1440; minute += 30) {
-      const before = valueAt(current, minute)
-      const after = valueAt(proposed, minute)
-      if (before > 0 && after > 0 && Math.abs(after - before) / before > maxStep + 1e-9) {
-        return `Änderung um ${Math.round((100 * Math.abs(after - before)) / before)} % um ${String(Math.floor(minute / 60)).padStart(2, '0')}:${String(minute % 60).padStart(2, '0')} überschreitet ${Math.round(maxStep * 100)} %`
+    if (!Array.isArray(proposal.schedule) || !proposal.schedule.length) return 'Ungültiger Zeitplan'
+    const fields = proposal.target === 'bg_targets' ? ['low', 'high'] : ['value']
+    for (const field of fields) {
+      const current = currentSchedule(state, proposal.target, field)
+      if (!current.length) return 'Kein aktueller Vergleichszeitplan vorhanden'
+      const proposed = proposal.schedule.map((e) => {
+        const [h, m] = String(e.time).split(':').map(Number)
+        return { minutes: h * 60 + m, value: e[field] ?? e.low ?? e.value }
+      })
+      for (let minute = 0; minute < 1440; minute += 30) {
+        const before = valueAt(current, minute)
+        const after = valueAt(proposed, minute)
+        if (!Number.isFinite(before) || !Number.isFinite(after) || before < 0 || after < 0) return 'Zeitplan kann nicht sicher verglichen werden'
+        if (before === 0 && after !== 0) return 'Änderung ausgehend von 0 kann nicht prozentual begrenzt werden'
+        if (before > 0 && Math.abs(after - before) / before > maxStep + 1e-9) {
+          return `Änderung um ${Math.round((100 * Math.abs(after - before)) / before)} % um ${String(Math.floor(minute / 60)).padStart(2, '0')}:${String(minute % 60).padStart(2, '0')} überschreitet ${Math.round(maxStep * 100)} %`
+        }
       }
     }
   }
@@ -292,8 +298,10 @@ export function checkStepSize(state, proposal, maxStep = 0.2) {
     const section = state[proposal.target] || {}
     for (const [key, value] of Object.entries(proposal.changes)) {
       const before = section[key]
-      if (typeof before === 'number' && typeof value === 'number' && before > 0 && Math.abs(value - before) / before > 0.3) {
-        return `"${key}" ändert sich um mehr als 30 %`
+      if (typeof before === 'number' && typeof value === 'number') {
+        if (!Number.isFinite(before) || !Number.isFinite(value)) return `"${key}" muss endlich sein`
+        if (before === 0 && value !== 0) return `"${key}" kann ausgehend von 0 nicht prozentual begrenzt werden`
+        if (before !== 0 && Math.abs(value - before) / Math.abs(before) > 0.3 + 1e-9) return `"${key}" ändert sich um mehr als 30 %`
       }
     }
   }

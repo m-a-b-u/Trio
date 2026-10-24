@@ -1,7 +1,19 @@
 name: 3. Create Certificates
 run-name: Create Certificates (${{ github.ref_name }})
 
-on: [workflow_call, workflow_dispatch]
+on:
+  workflow_call:
+    inputs:
+      allow_nuke:
+        description: Allow revoking shared distribution certificates
+        type: boolean
+        default: false
+  workflow_dispatch:
+    inputs:
+      allow_nuke:
+        description: Allow revoking shared distribution certificates
+        type: boolean
+        default: false
 
 env:
   TEAMID: ${{ secrets.TEAMID }}
@@ -76,8 +88,8 @@ jobs:
           fi
 
           # Check if ENABLE_NUKE_CERTS is not set to true when certs are not valid
-          if [ "$CERT_STATUS" = "true" ] && [ "$ENABLE_NUKE_CERTS" != "true" ]; then
-            echo "::error::❌ No valid distribution certificate found. Automated renewal of certificates was skipped because the repository variable ENABLE_NUKE_CERTS is not set to 'true'."
+          if [ "$CERT_STATUS" = "true" ] && { [ "$ENABLE_NUKE_CERTS" != "true" ] || [ "${{ inputs.allow_nuke }}" != "true" ]; }; then
+            echo "::error::Certificate renewal requires revocation. Stopping because certificate revocation is not enabled for this run."
             exit 1
           fi
 
@@ -91,7 +103,7 @@ jobs:
       name: Nuke certificates
       needs: [validate, create_certs]
       runs-on: macos-26
-      if: ${{ (needs.create_certs.outputs.new_certificate_needed == 'true' && vars.ENABLE_NUKE_CERTS == 'true') || vars.FORCE_NUKE_CERTS == 'true' }}
+      if: ${{ inputs.allow_nuke && ((needs.create_certs.outputs.new_certificate_needed == 'true' && vars.ENABLE_NUKE_CERTS == 'true') || vars.FORCE_NUKE_CERTS == 'true') }}
       steps:
         - name: Output from step id 'check_certs'
           run: echo "new_certificate_needed=${{ needs.create_certs.outputs.new_certificate_needed }}"

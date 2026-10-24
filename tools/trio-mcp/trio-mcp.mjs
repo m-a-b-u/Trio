@@ -66,7 +66,15 @@ function saveHistory(history) {
 function loadDB() {
   let db
   try { db = JSON.parse(fs.readFileSync(DB_FILE, 'utf8')) } catch { db = {} }
-  return { state: null, stateReceivedAt: null, proposals: [], reports: [], ...db }
+  db = { state: null, stateReceivedAt: null, proposals: [], reports: [], ...db }
+  const proposals = new Map(db.proposals.map((p) => [p.id, p]))
+  for (const report of db.reports) {
+    report.proposals = (report.proposals || []).map((p) => {
+      const current = proposals.get(p.id)
+      return current ? { ...p, status: current.status, resultMessage: current.resultMessage, resolvedAt: current.resolvedAt } : p
+    })
+  }
+  return db
 }
 
 function saveDB(db) {
@@ -110,15 +118,15 @@ function validateSchedule(target, schedule) {
     const m = /^(\d{1,2}):(\d{2})$/.exec(String(e.time ?? ''))
     if (!m) throw new Error(`entry ${i}: time must be "HH:MM"`)
     const minutes = Number(m[1]) * 60 + Number(m[2])
-    if (minutes >= 1440 || minutes % 30 !== 0) throw new Error(`entry ${i}: time must be on a 30-minute boundary`)
+    if (Number(m[1]) > 23 || Number(m[2]) > 59 || minutes % 30 !== 0) throw new Error(`entry ${i}: time must be on a 30-minute boundary`)
     if (i === 0 && minutes !== 0) throw new Error('first entry must start at 00:00')
     if (minutes <= last) throw new Error('times must be strictly ascending')
     last = minutes
     if (target === 'bg_targets') {
       const low = e.low ?? e.value
       const high = e.high ?? low
-      if (!(low > 0) || !(high >= low)) throw new Error(`entry ${i}: need low > 0 and high >= low (mg/dL)`)
-    } else if (!(e.value > 0)) {
+      if (!Number.isFinite(low) || !Number.isFinite(high) || !(low > 0) || !(high >= low)) throw new Error(`entry ${i}: need finite low > 0 and high >= low (mg/dL)`)
+    } else if (!Number.isFinite(e.value) || !(e.value > 0)) {
       throw new Error(`entry ${i}: value must be > 0`)
     }
   })
@@ -152,10 +160,14 @@ async function analyze(trigger = 'manual') {
   try {
     const config = loadConfig()
     if (!config.anthropicApiKey) throw new Error('No Anthropic API key. Run: node trio-mcp.mjs set-api-key')
-    const db = loadDB()
-    if (!db.state) throw new Error('Trio has not synced yet')
+    const input = loadDB()
+    if (!input.state) throw new Error('Trio has not synced yet')
     const stats = computeStats(loadHistory())
-    const result = await runClaudeAnalysis({ apiKey: config.anthropicApiKey, model: config.model, state: db.state, stats, previousReports: db.reports })
+    const result = await runClaudeAnalysis({ apiKey: config.anthropicApiKey, model: config.model, state: input.state, stats, previousReports: input.reports })
+    // Syncs and iPhone decisions can arrive while the model is running.
+    const db = loadDB()
+    const today = new Date().toDateString()
+    let proposalsToday = db.proposals.filter((p) => p.origin === 'daily-analysis' && new Date(p.createdAt).toDateString() === today).length
 
     // withdraw older, still pending automatic proposals
     for (const p of db.proposals) {
@@ -168,10 +180,14 @@ async function analyze(trigger = 'manual') {
     const proposals = []
     for (const raw of result.proposals || []) {
       const body = { target: raw.target, patch: raw.changes ?? null, schedule: raw.schedule ?? null, reason: raw.reason }
-      const guard = checkStepSize(db.state, { target: raw.target, changes: raw.changes, schedule: raw.schedule })
+      const guard = stats.coveredDays < 7 || stats.daily.filter((d) => d.n > 0).length < 7
+        ? 'Mindestens 7 Tage mit Glukosedaten erforderlich'
+        : proposalsToday >= 2 ? 'Maximal 2 automatische Therapie-Vorschläge pro Tag'
+          : checkStepSize(db.state, { target: raw.target, changes: raw.changes, schedule: raw.schedule })
       if (guard) { proposals.push({ ...body, status: 'blocked', resultMessage: guard }); continue }
       try {
         const p = createProposal(db, body, 'daily-analysis')
+        proposalsToday++
         proposals.push({ id: p.id, ...body, status: 'pending' })
       } catch (e) {
         proposals.push({ ...body, status: 'blocked', resultMessage: e.message })
@@ -253,18 +269,18 @@ function serve() {
         return res.end(fs.readFileSync(APP_FILE, 'utf8'))
       }
       const parts = url.pathname.split('/').filter(Boolean)
+      const body = req.method === 'POST' ? await readBody(req) : null
       const db = loadDB()
 
       // --- endpoints used by Trio ---
       if (req.method === 'POST' && url.pathname === '/trio/state') {
-        db.state = await readBody(req)
+        db.state = body
         db.stateReceivedAt = new Date().toISOString()
         saveDB(db)
         return send(res, 200, { ok: true, historyThrough: historyThrough(loadHistory()) })
       }
       if (req.method === 'POST' && url.pathname === '/trio/history') {
-        const upload = await readBody(req)
-        const merged = mergeHistory(loadHistory(), upload)
+        const merged = mergeHistory(loadHistory(), body)
         saveHistory(merged)
         return send(res, 200, { ok: true, historyThrough: historyThrough(merged), glucose: merged.glucose.length })
       }
@@ -275,7 +291,6 @@ function serve() {
       if (req.method === 'POST' && parts[0] === 'trio' && parts[1] === 'proposals' && parts[3] === 'result') {
         const p = db.proposals.find((x) => x.id === parts[2])
         if (!p) return send(res, 404, { error: 'not found' })
-        const body = await readBody(req)
         if (!['applied', 'rejected', 'failed'].includes(body.status)) return send(res, 400, { error: 'bad status' })
         Object.assign(p, { status: body.status, resultMessage: body.message ?? '', resolvedAt: body.at ?? new Date().toISOString() })
         saveDB(db)
@@ -291,7 +306,7 @@ function serve() {
         return send(res, 200, db.proposals.filter((p) => !status || p.status === status).slice(-50))
       }
       if (req.method === 'POST' && url.pathname === '/api/proposals') {
-        const proposal = createProposal(db, await readBody(req))
+        const proposal = createProposal(db, body)
         saveDB(db)
         return send(res, 200, proposal)
       }
@@ -337,28 +352,29 @@ function serve() {
   })
 }
 
+// All clients use the relay so only one process writes the database and runs analyses.
+async function api(pathname, options = {}) {
+  const config = loadConfig()
+  let res
+  try {
+    res = await fetch(`http://127.0.0.1:${config.port}${pathname}`, {
+      ...options,
+      headers: { Authorization: `Bearer ${config.token}`, 'Content-Type': 'application/json', ...(options.headers || {}) }
+    })
+  } catch {
+    throw new Error('trio-mcp relay is not running on this Mac. Start it with: node trio-mcp.mjs serve')
+  }
+  const body = await res.json().catch(() => ({}))
+  if (!res.ok) throw new Error(body.error || `HTTP ${res.status}`)
+  return body
+}
+
 // ---------- MCP server (stdio) ----------
 
 async function mcp() {
   const { McpServer } = await import('@modelcontextprotocol/sdk/server/mcp.js')
   const { StdioServerTransport } = await import('@modelcontextprotocol/sdk/server/stdio.js')
   const { z } = await import('zod')
-  const config = loadConfig()
-
-  async function api(pathname, options = {}) {
-    let res
-    try {
-      res = await fetch(`http://127.0.0.1:${config.port}${pathname}`, {
-        ...options,
-        headers: { Authorization: `Bearer ${config.token}`, 'Content-Type': 'application/json', ...(options.headers || {}) }
-      })
-    } catch {
-      throw new Error('trio-mcp relay is not running on this Mac. Start it with: node trio-mcp.mjs serve')
-    }
-    const body = await res.json().catch(() => ({}))
-    if (!res.ok) throw new Error(body.error || `HTTP ${res.status}`)
-    return body
-  }
   const text = (obj) => ({ content: [{ type: 'text', text: typeof obj === 'string' ? obj : JSON.stringify(obj, null, 2) }] })
   const guard = (fn) => async (args) => {
     try { return await fn(args) } catch (e) { return { ...text(`Error: ${e.message}`), isError: true } }
@@ -543,13 +559,13 @@ if (command === 'serve') serve()
 else if (command === 'set-api-key') setApiKey()
 else if (command === 'set-time') {
   const value = process.argv[3]
-  if (!/^\d{1,2}:\d{2}$/.test(value || '')) { console.error('Usage: set-time HH:MM'); process.exit(1) }
+  if (!/^(?:[01]?\d|2[0-3]):[0-5]\d$/.test(value || '')) { console.error('Usage: set-time HH:MM (00:00–23:59)'); process.exit(1) }
   const config = loadConfig(); config.analysisTime = value; saveConfig(config); console.log(`Daily analysis at ${value}`)
 }
 else if (command === 'set-model') {
   const config = loadConfig(); config.model = process.argv[3] || 'claude-sonnet-4-5'; saveConfig(config); console.log(`Model: ${config.model}`)
 }
-else if (command === 'analyze') analyze('cli').then((r) => console.log(JSON.stringify(r, null, 2)), (e) => { console.error(e.message); process.exit(1) })
+else if (command === 'analyze') api('/api/analyze', { method: 'POST' }).then((r) => console.log(JSON.stringify(r, null, 2)), (e) => { console.error(e.message); process.exit(1) })
 else if (command === 'mcp') mcp().catch((e) => { console.error(e); process.exit(1) })
 else if (command === 'info') info()
 else if (command === 'install-launchd') installLaunchd()

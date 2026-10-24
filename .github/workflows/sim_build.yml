@@ -32,6 +32,9 @@ jobs:
       - name: Capture submodule state for cache key
         run: git submodule status --recursive | awk '{print $1, $2}' > .submodule-status
 
+      - name: Test Claude relay with synthetic data
+        run: node --test tools/trio-mcp/*.test.mjs
+
       - name: Restore DerivedData
         uses: actions/cache@v5
         with:
@@ -64,6 +67,25 @@ jobs:
             PROVISIONING_PROFILE_SPECIFIER="" \
             | tee xcodebuild.log
 
+      - name: Test Claude proposal diff
+        run: |
+          set -o pipefail
+          xcodebuild test \
+            -workspace Trio.xcworkspace \
+            -scheme "Trio Tests" \
+            -destination "platform=iOS Simulator,name=iPhone 17,OS=26.2" \
+            -only-testing:TrioTests/ClaudeBridgeDiffTests \
+            -parallel-testing-enabled NO \
+            -skipPackagePluginValidation \
+            -skipMacroValidation \
+            -quiet \
+            COMPILER_INDEX_STORE_ENABLE=NO \
+            CODE_SIGN_IDENTITY="-" \
+            CODE_SIGN_STYLE=Manual \
+            DEVELOPMENT_TEAM="" \
+            PROVISIONING_PROFILE_SPECIFIER="" \
+            2>&1 | tee -a xcodebuild.log
+
       - name: Surface build errors
         if: failure()
         run: |
@@ -72,7 +94,7 @@ jobs:
 
       - name: Success summary
         if: success()
-        run: echo "✅ Trio builds for iOS Simulator" >> $GITHUB_STEP_SUMMARY
+        run: echo "✅ Trio builds for iOS Simulator; Claude relay and proposal diff tests passed" >> $GITHUB_STEP_SUMMARY
 
       - name: Upload build log
         if: failure()

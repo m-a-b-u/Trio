@@ -305,6 +305,19 @@ private func claudeScheduleDiff(
     }
 }
 
+func claudeBGTargetDiff(old: [BGTargetEntry], new: [BGTargetEntry]) -> [ClaudeDiffLine] {
+    let bounds: [(String, KeyPath<BGTargetEntry, Decimal>)] = [("Untergrenze", \.low), ("Obergrenze", \.high)]
+    return bounds.flatMap { label, keyPath in
+        claudeScheduleDiff(
+            old: old.map { ($0.offset, NSDecimalNumber(decimal: $0[keyPath: keyPath]).doubleValue) },
+            new: new.map { ($0.offset, NSDecimalNumber(decimal: $0[keyPath: keyPath]).doubleValue) },
+            unit: "mg/dL"
+        ).map { line in
+            ClaudeDiffLine(key: "\(label) \(line.key)", old: line.old, new: line.new, warning: line.warning)
+        }
+    }
+}
+
 private func claudeFormat(_ value: Double) -> String {
     let formatter = NumberFormatter()
     formatter.minimumFractionDigits = 0
@@ -653,14 +666,12 @@ private func claudeFormat(_ value: Double) -> String {
                     offset: item.minutes
                 )
             }
-            let old = storage.retrieve(OpenAPS.Settings.bgTargets, as: BGTargets.self)?
-                .targets.map { ($0.offset, NSDecimalNumber(decimal: $0.low).doubleValue) } ?? []
-            let new = entries.map { ($0.offset, NSDecimalNumber(decimal: $0.low).doubleValue) }
+            let old = storage.retrieve(OpenAPS.Settings.bgTargets, as: BGTargets.self)?.targets ?? []
             let profile = BGTargets(units: .mgdL, userPreferredUnits: .mgdL, targets: entries)
             return ClaudePreparedChange(
                 proposal: proposal,
                 title: "Glukose-Zielbereich",
-                lines: claudeScheduleDiff(old: old, new: new, unit: "mg/dL")
+                lines: claudeBGTargetDiff(old: old, new: entries)
             ) {
                 storage.save(profile, as: OpenAPS.Settings.bgTargets)
                 broadcaster.notify(BGTargetsObserver.self, on: .main) {

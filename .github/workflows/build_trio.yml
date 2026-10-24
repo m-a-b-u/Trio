@@ -97,6 +97,7 @@ jobs:
       # This syncs any target branch to upstream branch of the same name
       - name: Sync upstream changes
         if: | # do not run the upstream sync action on the upstream repository
+          github.event_name == 'schedule' &&
           steps.workflow-permission.outputs.has_permission == 'true' &&
           vars.SCHEDULED_SYNC != 'false' && github.repository_owner != 'nightscout'
         id: sync
@@ -179,6 +180,8 @@ jobs:
       needs: [check_status]
       name: Check certificates
       uses: ./.github/workflows/create_certs.yml
+      with:
+        allow_nuke: false
       secrets: inherit
       if: |
         github.event_name == 'workflow_dispatch' ||
