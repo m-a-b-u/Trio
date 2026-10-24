@@ -432,7 +432,7 @@ struct AIMealSettingsView: View {
                 if provider == .appleIntelligence {
                     Label(appleAvailability.message, systemImage: appleAvailability.available ? "checkmark.circle" : "info.circle")
                         .foregroundColor(appleAvailability.available ? .secondary : .orange)
-                    Text("Mahlzeit und Menge als Text beschreiben. Fotos werden mit dieser lokalen Integration nicht ausgewertet.")
+                    Text("Mahlzeit und Menge als Text beschreiben. Fotos werden mit dieser lokalen Integration nicht ausgewertet. Die Nährwertschätzung ist experimentell und muss geprüft werden.")
                         .font(.footnote)
                 } else {
                     TextField("Modell-ID mit Bildverständnis", text: $modelInput)
@@ -758,10 +758,10 @@ struct AIMealEstimateView: View {
                 Text(notes).font(.footnote).foregroundStyle(.secondary)
             }
             HStack {
-                Text("Sicherheit")
+                Text(usesAppleIntelligence ? "Bewertung" : "Sicherheit")
                 Spacer()
-                Text(confidenceLabel(estimate.confidence))
-                    .foregroundStyle(estimate.confidence == "high" ? .green : (estimate.confidence == "medium" ? .orange : .red))
+                Text(usesAppleIntelligence ? "Ungeprüfte Schätzung" : confidenceLabel(estimate.confidence))
+                    .foregroundStyle(usesAppleIntelligence ? .orange : (estimate.confidence == "high" ? .green : (estimate.confidence == "medium" ? .orange : .red)))
             }
         } header: { Text("Erkannt") }
 

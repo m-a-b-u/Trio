@@ -25,7 +25,7 @@ enum AppleIntelligenceMealError: LocalizedError, Equatable {
         case .descriptionTooLong:
             return "Bitte kürze die Mahlzeitbeschreibung auf höchstens 2000 Zeichen."
         case .missingPortion:
-            return "Die Portionsgröße ist nicht ausreichend beschrieben. Bitte ergänze Gewicht, Stückzahl oder Größe der Lebensmittel."
+            return "Bitte beschreibe höchstens acht Lebensmittel, jeweils mit Gewicht, Stückzahl oder Größe."
         case .invalidEstimate:
             return "Die lokale KI hat keine brauchbare Nährwertschätzung geliefert. Bitte beschreibe Lebensmittel und Mengen genauer."
         case let .unavailable(message): return message
@@ -100,11 +100,18 @@ enum AppleIntelligenceMealService {
                     Verwende nur die angegebenen Lebensmittel. Erfinde keine fehlenden Portionsangaben.
                     hasUsablePortion ist nur true, wenn für alle Lebensmittel eine Menge, Stückzahl oder Größe
                     angegeben ist. Bei fehlenden Mengen, unbrauchbarer Beschreibung oder nicht essbaren Dingen:
-                    hasUsablePortion false und items leer. Höchstens acht Lebensmittel; fasse bei Bedarf zusammen.
-                    Nährwerte gelten jeweils für die gesamte angegebene Portion, nicht pro 100 g.
-                    carbs sind verwertbare Kohlenhydrate ohne Ballaststoffe. Alle Mengen sind in Gramm.
-                    Schätzwerte auf ganze Gramm runden, keine Scheingenauigkeit. Bei unsicherem Portionsgewicht
-                    oder Rezept confidence low. Hinweise kurz auf Deutsch, nur zur Ernährungsunsicherheit.
+                    hasUsablePortion false und items leer. Bei mehr als acht Lebensmitteln ebenfalls
+                    hasUsablePortion false und items leer; lasse keine Lebensmittel weg und fasse keine zusammen.
+                    Gib das Gewicht der angegebenen Portion in grams aus, aber alle Nährwerte ausschließlich
+                    pro 100 g Lebensmittel: carbsPer100g, fatPer100g und proteinPer100g.
+                    Übernimm vom Nutzer genannte Nährwerte pro 100 g unverändert. Fettprozente entsprechen nur
+                    dann Gramm Fett pro 100 g, wenn sie sich auf das gesamte Lebensmittel beziehen:
+                    3,5 Prozent Fett im Naturjoghurt bedeutet fatPer100g 3.5, unabhängig vom Portionsgewicht.
+                    Angaben wie Fett i.Tr. beziehen sich auf die Trockenmasse, nicht auf das gesamte Lebensmittel;
+                    übernimm sie nicht als fatPer100g.
+                    Führe KEINE Portionsrechnung durch; die App multipliziert die Nährwerte mit grams / 100.
+                    carbsPer100g sind verwertbare Kohlenhydrate ohne Ballaststoffe. Runde ausdrücklich genannte
+                    Werte nicht auf ganze Gramm. Hinweise kurz auf Deutsch, nur zur Ernährungsunsicherheit.
                     """
                     )
                     let response = try await session.respond(
@@ -146,30 +153,17 @@ enum AppleIntelligenceMealService {
 
 #if canImport(FoundationModels)
     @available(iOS 26.0, macOS 26.0, *)
-    @Generable enum AppleMealConfidence {
-        case low, medium, high
-
-        var value: String {
-            switch self {
-            case .low: return "low"
-            case .medium: return "medium"
-            case .high: return "high"
-            }
-        }
-    }
-
-    @available(iOS 26.0, macOS 26.0, *)
     @Generable struct AppleMealDraftItem {
         @Guide(description: "Lebensmittelname, höchstens 80 Zeichen")
         var name: String
         @Guide(description: "Geschätztes Gewicht der angegebenen Portion in Gramm", .range(0 ... 9999))
         var grams: Double
-        @Guide(description: "Verwertbare Kohlenhydrate dieser Portion in Gramm", .range(0 ... 999))
-        var carbs: Double
-        @Guide(description: "Fett dieser Portion in Gramm", .range(0 ... 999))
-        var fat: Double
-        @Guide(description: "Protein dieser Portion in Gramm", .range(0 ... 999))
-        var protein: Double
+        @Guide(description: "Verwertbare Kohlenhydrate pro 100 g Lebensmittel, nicht pro Portion", .range(0 ... 100))
+        var carbsPer100g: Double
+        @Guide(description: "Fett pro 100 g Lebensmittel; genannte Fettprozente unverändert übernehmen", .range(0 ... 100))
+        var fatPer100g: Double
+        @Guide(description: "Protein pro 100 g Lebensmittel, nicht pro Portion", .range(0 ... 100))
+        var proteinPer100g: Double
     }
 
     @available(iOS 26.0, macOS 26.0, *)
@@ -178,7 +172,6 @@ enum AppleIntelligenceMealService {
         var hasUsablePortion: Bool
         @Guide(description: "Nur Lebensmittel mit beschriebener Portion", .count(0 ... 8))
         var items: [AppleMealDraftItem]
-        var confidence: AppleMealConfidence
         @Guide(description: "Unsicherheit auf Deutsch, höchstens zwei Sätze und 400 Zeichen; keine Therapiehinweise")
         var notes: String
         @Guide(description: "Deutsche Mahlzeitbezeichnung, höchstens 20 Zeichen")
@@ -192,15 +185,24 @@ enum AppleIntelligenceMealService {
             guard draft.items.count <= 8 else { throw AppleIntelligenceMealError.invalidEstimate }
             let items = try draft.items.map { item -> AIMealEstimate.Item in
                 let name = item.name.trimmingCharacters(in: .whitespacesAndNewlines)
-                guard !name.isEmpty, name.count <= 80, item.grams > 0 else { throw AppleIntelligenceMealError.invalidEstimate }
-                return AIMealEstimate.Item(name: name, grams: item.grams, carbs: item.carbs, fat: item.fat, protein: item.protein)
+                let macros = [item.carbsPer100g, item.fatPer100g, item.proteinPer100g]
+                guard !name.isEmpty, name.count <= 80, item.grams.isFinite, item.grams > 0, item.grams < 10000,
+                      macros.allSatisfy({ $0.isFinite && (0 ... 100).contains($0) }), macros.reduce(0, +) <= 100
+                else { throw AppleIntelligenceMealError.invalidEstimate }
+                let portionFactor = item.grams / 100
+                return AIMealEstimate.Item(
+                    name: name, grams: item.grams,
+                    carbs: item.carbsPer100g * portionFactor,
+                    fat: item.fatPer100g * portionFactor,
+                    protein: item.proteinPer100g * portionFactor
+                )
             }
             let estimate = AIMealEstimate(
                 items: items,
                 carbs: items.reduce(0) { $0 + $1.carbs },
                 fat: items.reduce(0) { $0 + ($1.fat ?? 0) },
                 protein: items.reduce(0) { $0 + ($1.protein ?? 0) },
-                confidence: draft.confidence.value,
+                confidence: "low",
                 notes: String(draft.notes.prefix(400)),
                 shortNote: String(draft.shortNote.prefix(20))
             )

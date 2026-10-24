@@ -42,25 +42,33 @@ import Testing
 
     #if canImport(FoundationModels)
         @available(iOS 26.0, macOS 26.0, *)
-        private func item(carbs: Double = 20, grams: Double = 100, name: String = "Reis") -> AppleMealDraftItem {
-            AppleMealDraftItem(name: name, grams: grams, carbs: carbs, fat: 2, protein: 3)
+        private func item(
+            carbsPer100g: Double = 20, fatPer100g: Double = 2, proteinPer100g: Double = 3,
+            grams: Double = 100, name: String = "Reis"
+        ) -> AppleMealDraftItem {
+            AppleMealDraftItem(
+                name: name, grams: grams, carbsPer100g: carbsPer100g, fatPer100g: fatPer100g, proteinPer100g: proteinPer100g
+            )
         }
 
         @available(iOS 26.0, macOS 26.0, *)
         private func draft(items: [AppleMealDraftItem], usable: Bool = true) -> AppleMealDraft {
             AppleMealDraft(
-                hasUsablePortion: usable, items: items, confidence: .low,
+                hasUsablePortion: usable, items: items,
                 notes: "Synthetische Portionsschätzung", shortNote: "Reis"
             )
         }
 
         @available(iOS 26.0, macOS 26.0, *)
-        @Test("Structured item values are summed in Swift and keep uncertainty")
+        @Test("Swift calculates 150 g at 3.5 percent plus a second 30 g portion without premature rounding")
         func structuredMapping() throws {
-            let estimate = try AppleIntelligenceMealService.mappedEstimate(draft(items: [item(), item(carbs: 10, name: "Gemüse")]))
-            #expect(estimate.carbs == 30)
-            #expect(estimate.fat == 4)
-            #expect(estimate.protein == 6)
+            let yogurt = item(carbsPer100g: 4.8, fatPer100g: 3.5, proteinPer100g: 3.6, grams: 150, name: "Naturjoghurt")
+            let oats = item(carbsPer100g: 60, fatPer100g: 7, proteinPer100g: 13, grams: 30, name: "Haferflocken")
+            let estimate = try AppleIntelligenceMealService.mappedEstimate(draft(items: [yogurt, oats]))
+            #expect(estimate.items.first?.fat == 5.25)
+            #expect(abs(estimate.carbs - 25.2) < 1e-9)
+            #expect(abs(estimate.fat - 7.35) < 1e-9)
+            #expect(abs(estimate.protein - 9.3) < 1e-9)
             #expect(estimate.items.count == 2)
             #expect(estimate.confidence == "low")
             #expect(estimate.notes == "Synthetische Portionsschätzung")
@@ -77,20 +85,37 @@ import Testing
                     #expect(error as? AppleIntelligenceMealError == .missingPortion)
                 }
             }
-            let zero = AppleMealDraftItem(name: "Unbekannt", grams: 100, carbs: 0, fat: 0, protein: 0)
+            let zero = item(carbsPer100g: 0, fatPer100g: 0, proteinPer100g: 0)
             #expect(fails { _ = try AppleIntelligenceMealService.mappedEstimate(draft(items: [zero])) })
         }
 
         @available(iOS 26.0, macOS 26.0, *)
         @Test("Generated constraints are revalidated, including sums and non-finite values")
         func invalidStructuredValues() {
-            let invalidItems = [item(carbs: -1), item(carbs: 1000), item(carbs: .infinity), item(carbs: .nan),
-                                item(grams: 0), item(grams: 10000), item(grams: .infinity), item(name: " ")]
+            let invalidItems = [item(carbsPer100g: -1), item(carbsPer100g: 100.01), item(carbsPer100g: .infinity),
+                                item(carbsPer100g: .nan), item(fatPer100g: -1), item(fatPer100g: 100.01),
+                                item(fatPer100g: .infinity), item(proteinPer100g: -1), item(proteinPer100g: 100.01),
+                                item(proteinPer100g: .nan), item(grams: 0), item(grams: -1), item(grams: 10000),
+                                item(grams: .infinity), item(grams: .nan), item(name: " ")]
             for invalid in invalidItems {
                 #expect(fails { _ = try AppleIntelligenceMealService.mappedEstimate(draft(items: [invalid])) })
             }
-            #expect(fails { _ = try AppleIntelligenceMealService.mappedEstimate(draft(items: [item(carbs: 600), item(carbs: 600)])) })
+            let large = item(carbsPer100g: 60, grams: 1000)
+            #expect(fails { _ = try AppleIntelligenceMealService.mappedEstimate(draft(items: [large, large])) })
             #expect(fails { _ = try AppleIntelligenceMealService.mappedEstimate(draft(items: Array(repeating: item(), count: 9))) })
+        }
+
+        @available(iOS 26.0, macOS 26.0, *)
+        @Test("Nutrients cannot exceed 100 g per 100 g; a pure nutrient remains valid")
+        func per100gMassLimit() throws {
+            let impossible = item(carbsPer100g: 60, fatPer100g: 30, proteinPer100g: 10.01)
+            #expect(fails { _ = try AppleIntelligenceMealService.mappedEstimate(draft(items: [impossible])) })
+            let oil = item(carbsPer100g: 0, fatPer100g: 100, proteinPer100g: 0, grams: 10, name: "Öl")
+            let estimate = try AppleIntelligenceMealService.mappedEstimate(draft(items: [oil]))
+            #expect(estimate.carbs == 0)
+            #expect(estimate.fat == 10)
+            #expect(estimate.protein == 0)
+            #expect(estimate.confidence == "low")
         }
 
         @available(iOS 26.0, macOS 26.0, *)

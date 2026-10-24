@@ -199,6 +199,11 @@ Dieser Anbieter verarbeitet ausschließlich Text, keine Fotos. Er benötigt wede
 Mac oder Cloud-Verbindung. Ist das lokale Modell nicht verfügbar, zeigt Trio den Grund an und wechselt
 nicht automatisch zu einem Cloud-Anbieter.
 
+Die lokale Nährwertschätzung ist experimentell: Das Modell schätzt Lebensmittelwerte pro 100 g, Trio
+berechnet daraus die Portionen und Summen. Das verhindert Rechenfehler bei der Skalierung, bestätigt
+aber nicht die Richtigkeit der vom Modell geschätzten Lebensmittelwerte. Die Anzeige kennzeichnet
+das Ergebnis deshalb ausdrücklich als ungeprüfte Schätzung; Werte vor der Übernahme kontrollieren.
+
 **Anthropic, OpenAI und OpenAI-kompatibel:** Modell-ID, gegebenenfalls Basis-URL und API-Key speichern.
 Schlüssel liegen im iPhone-Schlüsselbund, getrennt nach Anbieter und bei eigenen APIs nach Endpunkt.
 Das Modell muss Bilder verstehen; beim Schätzen werden das ausgewählte Foto und der optionale Hinweis
