@@ -1,0 +1,21 @@
+{
+  "name": "trio-mcp",
+  "version": "0.1.0",
+  "description": "MCP relay between Claude and the Trio iOS app. Claude can read and propose; changes require Face ID approval in Trio.",
+  "type": "module",
+  "bin": {
+    "trio-mcp": "trio-mcp.mjs"
+  },
+  "scripts": {
+    "serve": "node trio-mcp.mjs serve",
+    "mcp": "node trio-mcp.mjs mcp",
+    "info": "node trio-mcp.mjs info"
+  },
+  "engines": {
+    "node": ">=18"
+  },
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "^1.17.0",
+    "zod": "^3.23.8"
+  }
+}
