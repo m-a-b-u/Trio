@@ -1,17 +1,20 @@
 # trio-mcp
 
-Verbindet **MCP-fähige KI-Assistenten** mit **Trio** auf dem iPhone. Mahlzeitfotos und Tagesanalysen
-unterstützen **Anthropic**, **OpenAI** und **OpenAI-kompatible APIs**.
+Verbindet **Claude und ChatGPT über MCP** mit **Trio** auf dem iPhone. Die Bedienung erfolgt im
+normalen Chat des jeweiligen Clients; eine eigene Website ist dafür nicht erforderlich.
 
 ```
-KI-Assistent ──MCP (stdio)──▶ trio-mcp mcp ──▶ trio-mcp serve ◀──WLAN── Trio
-                                                   │
-                                     gewählter Analyseanbieter
+Claude Desktop ──MCP (stdio)───────────────────┐
+ChatGPT ──Secure MCP Tunnel (separat einrichten)┴──▶ trio-mcp mcp ──▶ Relay ◀── Trio
 ```
 
 **Freigabe:** Die KI liest den synchronisierten Stand und erstellt Vorschläge. Jede Änderung wird in Trio
 mit Vorher/Nachher-Diff angezeigt und erst nach lokaler Authentifizierung (Face ID oder Gerätecode)
 übernommen. Es gibt kein MCP-Tool zum direkten Anwenden oder zur Bolusabgabe.
+
+**Kein Inferenz-API-Key nötig:** Lesen, Statistiken und manuelle Vorschläge funktionieren über den
+MCP-Client ohne Anthropic- oder OpenAI-Modellschlüssel im Relay. Die unten beschriebenen Tagesanalysen
+und Mahlzeitfotos sind zusätzliche API-Funktionen mit eigener Anbieter-Konfiguration.
 
 ## Einrichtung am Mac
 
@@ -38,7 +41,61 @@ der Einrichtung löschen. Die CLI gibt nur Dateipfad und Server aus. Anbieter-Sc
 Manuelle Einrichtung bleibt unter **Einstellungen → KI → KI-Bridge (MCP)** möglich;
 `node trio-mcp.mjs info` zeigt dafür Serveradresse und Token an.
 
-## Anbieter für Tagesanalysen wählen
+## Native Chat-Clients
+
+### Claude Desktop am Mac
+
+Der vorhandene Server spricht MCP über stdio. Beispiel für
+`~/Library/Application Support/Claude/claude_desktop_config.json`:
+
+```json
+{
+  "mcpServers": {
+    "trio": {
+      "command": "/opt/homebrew/bin/node",
+      "args": ["/Users/DEINNAME/Developer/Trio/tools/trio-mcp/trio-mcp.mjs", "mcp"]
+    }
+  }
+}
+```
+
+Den Node-Pfad gegebenenfalls anpassen und den Client neu starten. Das Relay muss laufen.
+Die Auswahl des Chat-Clients legt nicht den Anbieter der optionalen automatischen Tagesanalyse fest.
+
+Stand 24.10.2026: Die vorhandene lokale Claude-Desktop-Konfiguration und der MCP-Handshake mit
+**11 Tools** wurden geprüft. Die Bedienung in der Claude-App wurde damit noch nicht abgenommen.
+
+### ChatGPT über Secure MCP Tunnel
+
+Der offizielle OpenAI-Tunnel kann direkt das vorhandene stdio-Kommando starten. Ein öffentlicher
+Trio-Server oder eine eigene Weboberfläche ist dafür nicht nötig. Die ChatGPT-Verbindung ist
+**noch nicht fertig eingerichtet oder durch einen Chat-Aufruf bestätigt**.
+
+1. In den [Platform-Tunneleinstellungen](https://platform.openai.com/settings/organization/tunnels)
+   einen Tunnel anlegen bzw. wiederverwenden und dem richtigen ChatGPT-Workspace zuordnen.
+2. Den offiziellen `tunnel-client` am Mac auf das Kommando `node /ABSOLUTER/PFAD/trio-mcp.mjs mcp`
+   konfigurieren und betreiben. Er benötigt eine Tunnel-ID und einen separat berechtigten Runtime-Key
+   für den Tunnelbetrieb; dieser ist kein Modellschlüssel für Trio-Tagesanalysen.
+3. Unter [ChatGPT Plugins](https://chatgpt.com/plugins) **Add custom MCP server → Connection: Tunnel**
+   wählen, denselben Tunnel verbinden und das Plugin im normalen Chat auswählen.
+
+Account-/Workspace-Freigaben, laufender Tunnel und die Verfügbarkeit im gewünschten nativen bzw.
+mobilen ChatGPT-Client müssen noch geprüft werden. Erst ein erfolgreicher Tool-Aufruf aus diesem
+Client bestätigt die Verbindung. Ein OpenAI-Inferenz-API-Key allein richtet sie nicht ein.
+Tunnel-Zugangsdaten gehören in eine private lokale Einrichtung, nicht ins Repository oder in den Chat.
+Der Tunnel soll den MCP-stdio-Prozess verbinden; der bestehende REST-Relay-Port mit seinen internen
+iPhone-Endpunkten wird dafür nicht öffentlich freigegeben.
+
+Anleitung: [Secure MCP Tunnel](https://developers.openai.com/api/docs/guides/secure-mcp-tunnels),
+[MCP in ChatGPT verbinden und testen](https://developers.openai.com/plugins/deploy/connect-chatgpt).
+
+### Claude auf dem iPhone
+
+Die lokale Claude-Desktop-Konfiguration wird nicht auf iOS übertragen. Dafür wäre ein separat
+erreichbarer Remote-MCP-Endpunkt über HTTPS mit passender Authentifizierung, vorgesehen mit OAuth,
+nötig. Dieser Zugang ist derzeit **nicht eingerichtet**; der OpenAI-Tunnel ersetzt ihn nicht.
+
+## Optionale API-Funktionen: Tagesanalyse
 
 Anbieter und Zugangsdaten am Mac sind unabhängig von der Konfiguration für Mahlzeitfotos am iPhone.
 Bestehende Anthropic-Schlüssel und Modellwerte bleiben beim Upgrade erhalten. Ein Anbieterwechsel
@@ -81,7 +138,7 @@ Der bisherige Anthropic-Standard `claude-sonnet-4-5` bleibt für bestehende Konf
 Anthropic kündigt seine Abschaltung für den 30. November 2026 an. Ein verfügbares Modell explizit
 konfigurieren ([Anthropic-Abkündigungen](https://platform.claude.com/docs/en/about-claude/model-deprecations)).
 
-## Mahlzeitfotos
+## Optionale API-Funktionen: Mahlzeitfotos
 
 In Trio: **Einstellungen → KI → KI-Anbieter für Mahlzeitfotos**. Anbieter, Modell-ID, gegebenenfalls
 Basis-URL und API-Key speichern. Schlüssel liegen im iPhone-Schlüsselbund, getrennt nach Anbieter und
@@ -91,26 +148,6 @@ kann bei „OpenAI-kompatibel“ ohne Schlüssel verwendet werden.
 Im Behandlungsdialog **Mahlzeit per Foto schätzen (KI)** wählen. Nur das ausgewählte Foto und der
 optionale Hinweis werden an diesen Anbieter gesendet. Die zurückgegebenen Nährwerte bleiben editierbar
 und füllen erst nach Übernahme das normale Trio-Formular vor; dadurch wird nichts automatisch dosiert.
-
-## MCP-Client
-
-Der MCP-Server ist anbieterunabhängig. Jeder Client mit lokalem MCP-stdio-Support kann ihn starten.
-Beispiel für Claude Desktop (`~/Library/Application Support/Claude/claude_desktop_config.json`):
-
-```json
-{
-  "mcpServers": {
-    "trio": {
-      "command": "/opt/homebrew/bin/node",
-      "args": ["/Users/DEINNAME/Developer/Trio/tools/trio-mcp/trio-mcp.mjs", "mcp"]
-    }
-  }
-}
-```
-
-Den Node-Pfad gegebenenfalls anpassen und den Client neu starten. Die Auswahl des MCP-Clients legt
-nicht den Anbieter der automatischen Tagesanalyse fest. Ein OpenAI-API-Key verbindet auch nicht
-automatisch die ChatGPT-Web-App mit einem lokalen stdio-Server.
 
 ## Einstellungen entdecken und ändern
 
@@ -145,7 +182,7 @@ prüft die Vorschau nochmals vor dem Anwenden. Wird die App dabei beendet oder i
 unterbrochen, bleibt das Ergebnis bewusst unbestätigt; es wird keine möglicherweise bereits erfolgte
 Pumpenaktion automatisch wiederholt. Den tatsächlichen Zustand am iPhone prüfen.
 
-## Tagesanalyse und Companion-Web-App
+## Ablauf der optionalen Tagesanalyse
 
 Trio lädt bis zu **30 Tage Verlauf** zum Relay: Glukose, Insulin, KH, Loop-Entscheidungen und TDD.
 Der Mac berechnet Statistiken und sendet diese zusammen mit Einstellungen und bisherigen Entscheidungen
@@ -153,10 +190,6 @@ zur konfigurierten Analyse-API. Der Anbieter wird im Bericht gespeichert.
 
 `analyze` benötigt das laufende Relay. CLI, MCP, Web-App und Scheduler teilen dieselbe Analyse-Sperre;
 parallele Synchronisierungen und iPhone-Entscheidungen bleiben während der Analyse erhalten.
-
-Die Web-App ist unter dem von `info` ausgegebenen Link erreichbar. Auf dem iPhone in Safari öffnen
-und bei Bedarf zum Home-Bildschirm hinzufügen. Sie zeigt Berichte, Konfigurationsstatus, Vorschläge,
-Glukose-Statistiken und Verlauf.
 
 Automatische Vorschläge benötigen mindestens sieben Tage Verlauf mit Messwerten an sieben verschiedenen
 Tagen. Höchstens zwei neu erstellte automatische Vorschläge pro Kalendertag; Ablehnung oder Rücknahme
@@ -168,6 +201,10 @@ skalare Änderungen ausgehend von null werden blockiert. Der Prompt verlangt zus
 kleinere Schritte und Vorrang für Hypoglykämien. Diese medizinischen Promptregeln ersetzen keine
 persönliche Prüfung. Ein erneuter Lauf zieht offene automatische Vorschläge zurück und kann wegen
 des Tageslimits keinen Ersatz erstellen.
+
+Die bisherige Companion-Web-App bleibt als optionale Ansicht für Berichte, Konfigurationsstatus,
+Vorschläge und Statistiken vorhanden. Sie ist keine Voraussetzung für die Bedienung in Claude oder
+ChatGPT. Berichte und Vorschläge sind auch über die unten aufgeführten MCP-Tools erreichbar.
 
 ## Tools
 

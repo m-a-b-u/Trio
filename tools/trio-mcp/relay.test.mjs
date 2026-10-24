@@ -335,21 +335,51 @@ test('provider-switch proposal previews its effective saved model and endpoint',
   assert.equal(response.body.oldValues.model, 'synthetic-model')
 })
 
-test('MCP advertises provider-neutral catalog tools and preserves nested settings proposals', async t => {
+test('MCP exposes chat instructions and tool hints, and reads/proposes/cancels without a provider key or call', async t => {
   const { Client } = await import('@modelcontextprotocol/sdk/client/index.js')
   const { StdioClientTransport } = await import('@modelcontextprotocol/sdk/client/stdio.js')
-  const { request, env } = await fixture(t)
+  let providerCalls = 0
+  const { request, env } = await fixture(t, (req, res) => {
+    providerCalls++
+    res.writeHead(500); res.end('{}')
+  }, { configuration: { anthropicApiKey: '' } })
   await request('/trio/state', { ...state(), settingsCatalog: [
     { target: 'glucose_alerts', key: 'alerts', type: 'array', current: [], access: 'proposal', constraints: {} },
     { target: 'ai_meal', key: 'apiKey', type: 'string', access: 'action', reason: 'Local entry' }
   ] })
+  await uploadSyntheticDays(request)
+  assert.equal((await request('/api/overview')).body.analysis.ready, false)
   const transport = new StdioClientTransport({ command: process.execPath, args: [script, 'mcp'], env })
   const client = new Client({ name: 'synthetic-trio-test', version: '1.0.0' })
   await client.connect(transport)
   t.after(() => client.close())
-  const toolNames = (await client.listTools()).tools.map(tool => tool.name)
-  assert.equal(toolNames.length, 11)
-  assert.ok(toolNames.includes('trio_get_settings_catalog'))
+  const instructions = client.getInstructions()
+  for (const phrase of ['current chat', 'No additional AI provider API key', 'snapshot age', 'trio_get_settings_catalog', 'approve locally', 'only when the user explicitly requests']) {
+    assert.ok(instructions.includes(phrase), `missing MCP instruction: ${phrase}`)
+  }
+  const tools = (await client.listTools()).tools
+  const readOnly = { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false }
+  const proposal = { readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: false }
+  const expectedHints = {
+    trio_get_status: readOnly, trio_get_settings: readOnly, trio_get_settings_catalog: readOnly,
+    trio_propose_settings_change: proposal, trio_propose_schedule: proposal,
+    trio_list_proposals: readOnly, trio_get_proposal: readOnly,
+    trio_cancel_proposal: { readOnlyHint: false, destructiveHint: true, idempotentHint: true, openWorldHint: false },
+    trio_get_history_stats: readOnly, trio_get_daily_report: readOnly,
+    trio_run_daily_analysis: { readOnlyHint: false, destructiveHint: true, idempotentHint: false, openWorldHint: true }
+  }
+  assert.equal(tools.length, 11)
+  for (const tool of tools) assert.deepEqual(tool.annotations, expectedHints[tool.name], tool.name)
+  assert.match(tools.find(tool => tool.name === 'trio_run_daily_analysis').description, /only when the user explicitly requests/)
+  const call = async (name, args = {}) => {
+    const response = await client.callTool({ name, arguments: args })
+    assert.equal(response.isError, undefined, name)
+    return JSON.parse(response.content[0].text)
+  }
+  assert.equal(typeof (await call('trio_get_status')).snapshotAgeMinutes, 'number')
+  assert.deepEqual((await call('trio_get_settings', { section: 'settings' })).data, state().settings)
+  assert.equal((await call('trio_get_history_stats')).readings, 8)
+  assert.deepEqual(await call('trio_get_daily_report'), [])
   const catalog = await client.callTool({ name: 'trio_get_settings_catalog', arguments: {} })
   assert.equal(catalog.isError, undefined)
   assert.ok(JSON.parse(catalog.content[0].text).catalog.some(row => row.target === 'relay_config'))
@@ -357,11 +387,20 @@ test('MCP advertises provider-neutral catalog tools and preserves nested setting
     target: 'glucose_alerts', changes: { alerts: [{ name: 'Synthetic', enabled: true }] }, reason: 'Synthetic nested proposal'
   } })
   assert.equal(result.isError, undefined)
-  assert.deepEqual(JSON.parse(result.content[0].text).proposal.patch.alerts, [{ name: 'Synthetic', enabled: true }])
+  const created = JSON.parse(result.content[0].text).proposal
+  assert.deepEqual(created.patch.alerts, [{ name: 'Synthetic', enabled: true }])
+  assert.equal((await call('trio_list_proposals', { status: 'pending' }))[0].id, created.id)
+  assert.equal((await call('trio_get_proposal', { id: created.id })).status, 'pending')
+  await call('trio_cancel_proposal', { id: created.id })
+  assert.equal((await call('trio_get_proposal', { id: created.id })).status, 'cancelled')
+  assert.deepEqual(await call('trio_list_proposals', { status: 'pending' }), [])
   const denied = await client.callTool({ name: 'trio_propose_settings_change', arguments: {
     target: 'ai_meal', changes: { apiKey: 'not-a-secret' }, reason: 'Synthetic rejected action'
   } })
   assert.equal(denied.isError, true)
+  assert.deepEqual((await request('/api/state')).body.state.settings, state().settings)
+  assert.deepEqual((await request('/api/reports')).body, [])
+  assert.equal(providerCalls, 0)
 })
 
 test('iPhone approval reservation excludes concurrent cancellation and duplicate application', async t => {
