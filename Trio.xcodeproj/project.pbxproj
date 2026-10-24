@@ -364,6 +364,7 @@
 		581516A92BCEEDF800BF67D7 /* NSPredicates.swift in Sources */ = {isa = PBXBuildFile; fileRef = 581516A82BCEEDF800BF67D7 /* NSPredicates.swift */; };
 		581AC4392BE22ED10038760C /* JSONConverter.swift in Sources */ = {isa = PBXBuildFile; fileRef = 581AC4382BE22ED10038760C /* JSONConverter.swift */; };
 		58237D9E2BCF0A6B00A47A79 /* PopupView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 58237D9D2BCF0A6B00A47A79 /* PopupView.swift */; };
+		AA1C1A0D2EB0000200C1A0D1 /* AIMealEstimateView.swift in Sources */ = {isa = PBXBuildFile; fileRef = AA1C1A0D2EB0000100C1A0D1 /* AIMealEstimateView.swift */; };
 		5825A1BE2C97335C0046467E /* EditTempTargetForm.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5825A1BD2C97335C0046467E /* EditTempTargetForm.swift */; };
 		582DF9752C8CDB92001F516D /* GlucoseChartView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 582DF9742C8CDB92001F516D /* GlucoseChartView.swift */; };
 		582DF9772C8CDBE7001F516D /* InsulinView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 582DF9762C8CDBE7001F516D /* InsulinView.swift */; };
@@ -1448,6 +1449,7 @@
 		581516A82BCEEDF800BF67D7 /* NSPredicates.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NSPredicates.swift; sourceTree = "<group>"; };
 		581AC4382BE22ED10038760C /* JSONConverter.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = JSONConverter.swift; sourceTree = "<group>"; };
 		58237D9D2BCF0A6B00A47A79 /* PopupView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PopupView.swift; sourceTree = "<group>"; };
+		AA1C1A0D2EB0000100C1A0D1 /* AIMealEstimateView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AIMealEstimateView.swift; sourceTree = "<group>"; };
 		5825A1BD2C97335C0046467E /* EditTempTargetForm.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = EditTempTargetForm.swift; sourceTree = "<group>"; };
 		582DF9742C8CDB92001F516D /* GlucoseChartView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = GlucoseChartView.swift; sourceTree = "<group>"; };
 		582DF9762C8CDBE7001F516D /* InsulinView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = InsulinView.swift; sourceTree = "<group>"; };
@@ -3633,6 +3635,7 @@
 			children = (
 				BDFD16592AE40438007F0DDA /* TreatmentsRootView.swift */,
 				58237D9D2BCF0A6B00A47A79 /* PopupView.swift */,
+				AA1C1A0D2EB0000100C1A0D1 /* AIMealEstimateView.swift */,
 				BDB899872C564509006F3298 /* ForecastChart.swift */,
 				DD07CA5A2CE950B9002D45A9 /* MealPreset */,
 			);
@@ -5494,6 +5497,7 @@
 				BD249D8E2D42FC3900412DEB /* LoopBarChartView.swift in Sources */,
 				CE7950242997D81700FA576E /* CGMSettingsView.swift in Sources */,
 				58237D9E2BCF0A6B00A47A79 /* PopupView.swift in Sources */,
+				AA1C1A0D2EB0000200C1A0D1 /* AIMealEstimateView.swift in Sources */,
 				BD793CB02CE7C61500D669AC /* OverrideRunStored+helper.swift in Sources */,
 				3B4196E02D8C4BC00091DFF7 /* HomeStateModel+CGM.swift in Sources */,
 				D9441F789E7043278FD01494 /* HomeStateModel+QuickPickTreatments.swift in Sources */,
