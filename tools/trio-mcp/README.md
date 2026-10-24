@@ -4,8 +4,8 @@ Verbindet **Claude und ChatGPT über MCP** mit **Trio** auf dem iPhone. Die Bedi
 normalen Chat des jeweiligen Clients; eine eigene Website ist dafür nicht erforderlich.
 
 ```
-Claude Desktop ──MCP (stdio)───────────────────┐
-ChatGPT ──Secure MCP Tunnel (separat einrichten)┴──▶ trio-mcp mcp ──▶ Relay ◀── Trio
+Claude Desktop ──MCP (stdio)────────────────────────┐
+Claude / ChatGPT ──HTTPS + OAuth──▶ trio-mcp remote ─┴──▶ Relay ◀── Trio
 ```
 
 **Freigabe:** Die KI liest den synchronisierten Stand und erstellt Vorschläge. Jede Änderung wird in Trio
@@ -89,11 +89,58 @@ iPhone-Endpunkten wird dafür nicht öffentlich freigegeben.
 Anleitung: [Secure MCP Tunnel](https://developers.openai.com/api/docs/guides/secure-mcp-tunnels),
 [MCP in ChatGPT verbinden und testen](https://developers.openai.com/plugins/deploy/connect-chatgpt).
 
-### Claude auf dem iPhone
+### Remote-MCP für Claude und ChatGPT
 
-Die lokale Claude-Desktop-Konfiguration wird nicht auf iOS übertragen. Dafür wäre ein separat
-erreichbarer Remote-MCP-Endpunkt über HTTPS mit passender Authentifizierung, vorgesehen mit OAuth,
-nötig. Dieser Zugang ist derzeit **nicht eingerichtet**; der OpenAI-Tunnel ersetzt ihn nicht.
+Der gemeinsame Remote-Zugang verwendet **Streamable HTTP und OAuth mit PKCE S256**. Er bietet dieselben
+11 Werkzeuge wie stdio. Der angemeldete Chat-Assistent benötigt dafür keinen Modell-API-Key im Relay.
+Die lokale Claude-Desktop-Konfiguration wird nicht auf iOS übertragen; dort den Remote-Connector verwenden.
+
+```bash
+node trio-mcp.mjs remote-setup https://DEINE-MCP-DOMAIN
+node trio-mcp.mjs remote
+node trio-mcp.mjs remote-info
+```
+
+`remote` lauscht ausschließlich auf **127.0.0.1:8766**. Einen HTTPS-Reverse-Proxy/Tunnel ausschließlich
+auf diesen Port richten, **niemals auf den iPhone-REST-Relay-Port 8765**. Bei einer festen Domain startet
+`node trio-mcp.mjs install-remote-launchd` den Remote-Dienst automatisch am Mac; der HTTPS-Proxy braucht
+einen eigenen laufenden Dienst. Mac und Relay müssen erreichbar bleiben, damit aktuelle Daten verfügbar sind.
+Die iPhone-Synchronisierung verwendet weiterhin die bestehende lokale Verbindung bzw. ein VPN.
+
+Als Connector-URL in Claude oder ChatGPT **`https://DEINE-MCP-DOMAIN/mcp`** eintragen und OAuth wählen.
+Client-ID und Client-Secret leer lassen: Die Clients registrieren sich automatisch als öffentliche
+PKCE-Clients. Im anschließenden Trio-Anmeldedialog den privaten Schlüssel aus
+`~/.trio-mcp/remote-owner-key.txt` eingeben und den angezeigten Client samt Rücksprungadresse prüfen.
+Dieser Schlüssel ist separat vom Bridge-Token und von Anbieter-API-Keys. Die Seite dient ausschließlich
+der Anmeldung; Trio wird anschließend im normalen Chat bedient.
+
+Die Einrichtung speichert Schlüssel und Konfiguration mit Dateirechten 0600, OAuth-Grants nur als
+Token-Hashes. Access-Tokens gelten eine Stunde, Refresh-Tokens 30 Tage und werden bei Nutzung ersetzt.
+Callbacks sind auf Claude und ChatGPT begrenzt. Ein Wechsel der öffentlichen Adresse verwendet getrennte
+OAuth-Grants und erfordert erneutes Verbinden. Zum Widerruf den Connector trennen; unterstützt der
+Client keine Token-Revocation, den Remote-Dienst stoppen und die zugehörige `remote-auth-*.json` entfernen
+(dadurch werden alle Clients dieser Adresse abgemeldet).
+
+Ein **Cloudflare Quick Tunnel** eignet sich für einen vorläufigen Test. Seine Adresse ist nicht dauerhaft,
+ändert sich bei einem neuen Tunnel und muss dann mit `remote-setup` aktualisiert werden. HTTPS endet bei
+Cloudflare; der Tunnelanbieter verarbeitet den Verkehr. Der Server verwendet JSON-Antworten ohne SSE,
+da Quick Tunnels keine SSE-Dauerstreams unterstützen. Für regelmäßige Nutzung eine feste Domain mit
+verwaltetem Tunnel oder HTTPS-Reverse-Proxy verwenden.
+
+Der Teststarter übernimmt die wechselnde Adresse und startet beide Prozesse zusammen:
+`node remote-test-tunnel.mjs /ABSOLUTER/PFAD/cloudflared`. Den normalen `remote`-Dienst vorher stoppen,
+da der Starter denselben Port benötigt. Bei Abbruch oder Ausfall eines Prozesses beendet er beide.
+Es gibt keinen automatischen Neustart mit einer anderen Adresse. `remote-info` zeigt die gespeicherte
+Adresse, prüft aber nicht, ob der Tunnel noch läuft. Der Teststarter und die festen LaunchAgents sind
+alternative Betriebsarten; nur eine davon gleichzeitig verwenden.
+
+Protokolltests prüfen OAuth, geschützten Zugriff und MCP-Werkzeuge mit synthetischen Daten. Erst ein
+Tool-Aufruf im gewünschten nativen Client bestätigt dessen tatsächliche Verbindung; Account-/Workspace-
+Verfügbarkeit und mobile Unterstützung müssen dort geprüft werden.
+
+Referenzen: [Claude-Authentifizierung](https://claude.com/docs/connectors/building/authentication),
+[ChatGPT-OAuth](https://developers.openai.com/plugins/build/auth),
+[Cloudflare Quick Tunnels](https://developers.cloudflare.com/tunnel/get-started/quick-tunnels/).
 
 ## Optionale API-Funktionen: Tagesanalyse
 

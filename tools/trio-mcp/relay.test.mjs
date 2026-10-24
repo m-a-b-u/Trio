@@ -391,6 +391,11 @@ test('MCP exposes chat instructions and tool hints, and reads/proposes/cancels w
   assert.deepEqual(created.patch.alerts, [{ name: 'Synthetic', enabled: true }])
   assert.equal((await call('trio_list_proposals', { status: 'pending' }))[0].id, created.id)
   assert.equal((await call('trio_get_proposal', { id: created.id })).status, 'pending')
+  for (const id of [`../../trio/proposals/${created.id}/claim?x=`, `${created.id}?x=`, `%2e%2e%2f${created.id}`]) {
+    const response = await client.callTool({ name: 'trio_cancel_proposal', arguments: { id } })
+    assert.equal(response.isError, true)
+  }
+  assert.equal((await call('trio_get_proposal', { id: created.id })).status, 'pending')
   await call('trio_cancel_proposal', { id: created.id })
   assert.equal((await call('trio_get_proposal', { id: created.id })).status, 'cancelled')
   assert.deepEqual(await call('trio_list_proposals', { status: 'pending' }), [])
