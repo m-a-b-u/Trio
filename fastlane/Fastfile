@@ -225,6 +225,24 @@ platform :ios do
         "#{BUNDLE_ID}.LiveActivity"
       ]
     )
+
+    # Match keeps profiles the portal still reports as valid, even after an App Group was added to the
+    # identifier later. Regenerate only those profiles that lack the App Group entitlement.
+    app_group = "group.org.nightscout.#{TEAMID}.trio.trio-app-group"
+    stale = ["#{BUNDLE_ID}", "#{BUNDLE_ID}.LiveActivity"].reject do |identifier|
+      profile_path = ENV["sigh_#{identifier}_appstore_profile-path"]
+      profile_path && sh("security cms -D -i #{profile_path.shellescape}", log: false).include?(app_group)
+    end
+    unless stale.empty?
+      UI.important("Regenerating provisioning profiles without #{app_group}: #{stale.join(', ')}")
+      match(
+        type: "appstore",
+        force: true,
+        verbose: true,
+        git_basic_authorization: Base64.strict_encode64("#{GITHUB_REPOSITORY_OWNER}:#{GH_PAT}"),
+        app_identifier: stale
+      )
+    end
   end
 
   desc "Validate Secrets"
