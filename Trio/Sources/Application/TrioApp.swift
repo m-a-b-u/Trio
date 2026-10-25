@@ -41,6 +41,7 @@ extension Notification.Name {
     @State private var showOnboardingCompletedSplash = false
     @State private var showMigrationError: Bool = false
     @State private var pendingBridgeSetup: AIBridgeSetupPresentation?
+    @State private var restoreOffer: DeviceStateBackup? = DeviceStateBackupManager.shared.restoreOffer()
 
     // Dependencies Assembler
     // contain all dependencies Assemblies
@@ -93,6 +94,7 @@ extension Notification.Name {
         _ = resolver.resolve(GlucoseAlertCoordinator.self)!
         _ = resolver.resolve(NotLoopingMonitor.self)!
         _ = DeviceAlertsStore.shared
+        DeviceStateBackupManager.shared.start()
         let bridgeResolver = resolver
         Task { @MainActor in ClaudeBridgeService.shared.start(resolver: bridgeResolver) }
         // Last: needs the pump manager's AlertResponder registration and the
@@ -136,6 +138,10 @@ extension Notification.Name {
     }
 
     init() {
+        // Before anything reads persisted state: the pump and CGM managers load theirs once at startup.
+        if DeviceStateBackupManager.shared.applyPendingRestoreIfNeeded() {
+            onboardingManager.checkOnboardingStatus()
+        }
         FileProtectionFixer.fixFlagFileProtectionForPropertyPersistentFlags() // TODO: ‼️ REMOVE ME BEFORE PUBLIC BETA / RELEASE
 
         let notificationCenter = Foundation.NotificationCenter.default
@@ -364,6 +370,25 @@ extension Notification.Name {
                             .environment(appState)
                             .environmentObject(Icons())
                     }
+                } else if let restoreOffer, onboardingManager.shouldShowOnboarding {
+                    DeviceStateRestoreView(
+                        backup: restoreOffer,
+                        onRestore: { includePumpState in
+                            do {
+                                try DeviceStateBackupManager.shared.scheduleRestore(includePumpState: includePumpState)
+                                // The restore is applied at next launch, before any service reads its state.
+                                exit(0)
+                            } catch {
+                                warning(.storage, "Could not schedule device state restore: \(error)")
+                                self.restoreOffer = nil
+                            }
+                        },
+                        onSkip: {
+                            DeviceStateBackupManager.shared.declineRestore()
+                            self.restoreOffer = nil
+                        }
+                    )
+                    .preferredColorScheme(colorScheme(for: .dark) ?? nil)
                 } else if onboardingManager.shouldShowOnboarding {
                     // Show onboarding if needed
                     Onboarding.RootView(

@@ -648,6 +648,7 @@ private func claudeFormat(_ value: Double) -> String {
         lastHistoryUpload = nil
         notifiedIDs = []
         history = []
+        AIMealLogStore.shared.resetUploadState()
     }
 
     func start(resolver: Resolver) {
@@ -710,6 +711,8 @@ private func claudeFormat(_ value: Double) -> String {
         do {
             let stateResponse = try await request("/trio/state", method: "POST", body: snapshot())
             try await uploadHistoryIfNeeded(stateResponse)
+            // Meal photos are optional extras: their failure must never block proposal polling.
+            do { try await uploadMealsIfNeeded() } catch { log("Mahlzeiten-Upload fehlgeschlagen: \(error.localizedDescription)") }
             let data = try await request("/trio/proposals?status=pending")
             let proposals = try JSONDecoder().decode([ClaudeProposal].self, from: data)
             pending = proposals
@@ -738,6 +741,27 @@ private func claudeFormat(_ value: Double) -> String {
         }
         _ = try await request("/trio/history", method: "POST", body: payload)
         lastHistoryUpload = Date()
+    }
+
+    // MARK: AI meals (photos and estimates)
+
+    /// Uploads new or changed meal log entries in small batches so photos never form one huge request.
+    private func uploadMealsIfNeeded() async throws {
+        let store = AIMealLogStore.shared
+        for _ in 0 ..< 5 {
+            let batch = store.pendingUploads(limit: 5)
+            guard !batch.isEmpty else { return }
+            let payload: [String: Any] = ["meals": batch.map { store.uploadPayload($0) }]
+            let revisions = Dictionary(uniqueKeysWithValues: batch.map { ($0.id, $0.revision) })
+            do {
+                _ = try await request("/trio/meals", method: "POST", body: payload)
+            } catch let ClaudeBridgeError.http(status, _) where status == 400 {
+                // Rejected for good (e.g. an older relay or invalid entry): skip it so newer meals still sync.
+                store.markUploaded(revisions)
+                throw ClaudeBridgeError.http(status, "meal batch rejected")
+            }
+            store.markUploaded(revisions)
+        }
     }
 
     nonisolated static func collectHistory(since: Date, context: NSManagedObjectContext) -> [String: Any] {

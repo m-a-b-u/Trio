@@ -1,6 +1,6 @@
 # trio-mcp
 
-Verbindet **Claude und ChatGPT über MCP** mit **Trio** auf dem iPhone. Die Bedienung erfolgt im
+Verbindet **Claude, OpenCode und ChatGPT über MCP** mit **Trio** auf dem iPhone. Die Bedienung erfolgt im
 normalen Chat des jeweiligen Clients; eine eigene Website ist dafür nicht erforderlich.
 
 ```
@@ -63,8 +63,30 @@ Der vorhandene Server spricht MCP über stdio. Beispiel für
 Den Node-Pfad gegebenenfalls anpassen und den Client neu starten. Das Relay muss laufen.
 Die Auswahl des Chat-Clients legt nicht den Anbieter der optionalen automatischen Tagesanalyse fest.
 
-Stand 24.10.2026: Die vorhandene lokale Claude-Desktop-Konfiguration und der MCP-Handshake mit
-**11 Tools** wurden geprüft. Die Bedienung in der Claude-App wurde damit noch nicht abgenommen.
+### Claude Code und OpenCode am Mac
+
+Beide Clients verwenden denselben stdio-Server und dasselbe lokale Relay wie Claude Desktop.
+Mit absoluten Pfaden registrieren (Node- und Projektpfad gegebenenfalls anpassen):
+
+```sh
+claude mcp add --scope user --transport stdio trio -- /opt/homebrew/bin/node /ABSOLUTER/PFAD/Trio/tools/trio-mcp/trio-mcp.mjs mcp
+claude mcp get trio
+
+opencode mcp add trio --global -- /opt/homebrew/bin/node /ABSOLUTER/PFAD/Trio/tools/trio-mcp/trio-mcp.mjs mcp
+opencode reload
+opencode mcp list
+```
+
+Die OpenCode-Befehle sind mit Version 2.1.4 geprüft. Bei installierter Desktop-App kann die CLI unter
+`/Applications/OpenCode.app/Contents/Resources/opencode-cli` liegen. Der offizielle Add-Befehl schreibt
+das passende Konfigurationsformat; `reload` lädt es im laufenden Hintergrunddienst neu.
+Siehe [OpenCode MCP-Konfiguration](https://dev.opencode.ai/v2/docs/mcp-servers/).
+
+Stand 25.10.2026: Claude Desktop ist konfiguriert; Claude Code und OpenCode melden Trio als verbunden.
+Der stdio-Handshake liefert **11 Tools**; Status, Einstellungskatalog und Verlaufsstatistik wurden
+erfolgreich lesend abgerufen. Die Bedienung in den Chat-Oberflächen und der Vorschlags-/Freigabeablauf
+wurden dabei nicht erneut geprüft. Änderungen bleiben in allen Clients Vorschläge mit lokaler Freigabe
+am iPhone. Für Analysen im Chat ist kein zusätzlicher Provider-Schlüssel im Relay erforderlich.
 
 ### ChatGPT über Secure MCP Tunnel
 
@@ -93,7 +115,7 @@ Anleitung: [Secure MCP Tunnel](https://developers.openai.com/api/docs/guides/sec
 ### Remote-MCP für Claude und ChatGPT
 
 Der gemeinsame Remote-Zugang verwendet **Streamable HTTP und OAuth mit PKCE S256**. Er bietet dieselben
-11 Werkzeuge wie stdio. Der angemeldete Chat-Assistent benötigt dafür keinen Modell-API-Key im Relay.
+14 Werkzeuge wie stdio. Der angemeldete Chat-Assistent benötigt dafür keinen Modell-API-Key im Relay.
 Die lokale Claude-Desktop-Konfiguration wird nicht auf iOS übertragen; dort den Remote-Connector verwenden.
 
 ```bash
@@ -206,9 +228,19 @@ das Ergebnis deshalb ausdrücklich als ungeprüfte Schätzung; Werte vor der Üb
 
 **Anthropic, OpenAI und OpenAI-kompatibel:** Modell-ID, gegebenenfalls Basis-URL und API-Key speichern.
 Schlüssel liegen im iPhone-Schlüsselbund, getrennt nach Anbieter und bei eigenen APIs nach Endpunkt.
-Das Modell muss Bilder verstehen; beim Schätzen werden das ausgewählte Foto und der optionale Hinweis
-an diesen Anbieter gesendet. Ein OpenAI-kompatibler Endpunkt ohne Authentifizierung kann ohne Schlüssel
-verwendet werden.
+Eingabe ist ein Foto, eine Textbeschreibung oder beides; ohne Foto wird nur der Text gesendet. Für Fotos
+muss das Modell Bilder verstehen. Ein OpenAI-kompatibler Endpunkt ohne Authentifizierung kann ohne
+Schlüssel verwendet werden.
+
+**Websuche:** Bei Anthropic und OpenAI lässt sich im Mahlzeiten-Dialog die Websuche des Anbieters
+einschalten, etwa für Markenprodukte oder Restaurantgerichte. Die Anfrage dauert dann länger und kann
+zusätzliche Kosten verursachen; bei Anthropic muss die Websuche für die Organisation freigeschaltet sein.
+OpenAI-kompatible Endpunkte und Apple Intelligence haben keine Websuche.
+
+**Mahlzeiten-Log:** Jede erfolgreiche Schätzung wird mit Foto (falls vorhanden), Beschreibung, Anbieter,
+Websuche-Status und Ergebnis unter `Documents/ai-meals` auf dem iPhone gespeichert, bis zu 365 Tage.
+Die übernommenen Werte werden nachgetragen. Mit eingeschalteter KI-Bridge lädt Trio neue und geänderte
+Einträge samt Originalfoto zum Relay hoch (`~/.trio-mcp/meals.json` und `~/.trio-mcp/meals/`, Modus 0600).
 
 Die zurückgegebenen Nährwerte bleiben bei allen Anbietern editierbar und füllen erst nach Übernahme
 das normale Trio-Formular vor; dadurch wird nichts automatisch dosiert. Ein Anbieterwechsel erhält die
@@ -287,8 +319,60 @@ ChatGPT. Berichte und Vorschläge sind auch über die unten aufgeführten MCP-To
 | `trio_propose_settings_change` | Skalare oder verschachtelte Einstellungen zur Freigabe vorschlagen |
 | `trio_propose_schedule` | Basal, ISF, KH-Faktor oder BG-Zielplan vorschlagen |
 | `trio_get_history_stats` | Bis zu 30 Tage Statistiken |
+| `trio_get_history` | Einzelne unveränderte Verlaufsdatensätze, vollständig über Cursor abrufbar |
+| `trio_get_data_quality` | Datenabdeckung, Zeitstempel, Duplikate und Glukoselücken |
+| `trio_compare_periods` | Zwei Zeiträume mit Statistik und Datenqualität vergleichen |
+| `trio_get_meals` | Protokollierte KI-Mahlzeiten mit Schätzung und übernommenen Werten, seitenweise |
+| `trio_get_meal_photo` | Originalfoto einer protokollierten Mahlzeit als Bild |
 | `trio_get_daily_report` / `trio_run_daily_analysis` | Bericht lesen / Analyse starten |
 | `trio_list_proposals` / `trio_get_proposal` / `trio_cancel_proposal` | Vorschläge verfolgen oder zurückziehen |
+
+### Exakte Daten für Graphen
+
+`trio_get_history` liefert die gespeicherten Relay-Datensätze ohne Mittelung, Ausdünnung, Rundung,
+Einheitenumrechnung oder erfundene Zwischenwerte. Verfügbare `kind`-Werte: `glucose`, `carbs`, `boluses`,
+`tempBasals`, `determinations` (unter anderem IOB/COB) und `tdd`. Die Antwort beschreibt alle exportierten
+Felder und Einheiten. Glukose bleibt **mg/dL**, unabhängig von der Anzeigeeinheit am iPhone.
+
+Erster Aufruf, beispielsweise:
+
+```json
+{"kind":"glucose","from":"2026-09-25T00:00:00+02:00","to":"2026-10-25T00:00:00+02:00","limit":1000}
+```
+
+Ohne Zeitraum gilt: letzte 30 × 24 Stunden. Explizite Zeitstempel benötigen eine Zeitzone.
+`from` ist inklusive, `to` exklusiv; maximal 30 × 24 Stunden je Abfrage. Ein vollständiger Verlauf mit
+einem Messpunkt alle fünf Minuten enthält in diesem Zeitraum **8.640 Punkte**. Die tatsächliche Anzahl
+steht in `total`; eine Seite liefert standardmäßig 500, höchstens 1.000 Datensätze.
+
+Solange `nextCursor` nicht `null` ist, mit **nur** `cursor` und optional `limit` fortsetzen. Alle `data`-Arrays
+in dieser Reihenfolge zusammenführen; `offset`, dieselbe `revision` auf allen Seiten und abschließend
+die Gesamtzahl gegen `total` prüfen. Der Cursor hält Zeitraum und Datenart fest. Werden passende Daten
+während des Abrufs korrigiert, ergänzt oder entfernt, bricht der Folgeaufruf explizit ab: gesammelte Seiten
+verwerfen und neu beginnen. Keine stillschweigend gemischten Datenstände. JSON-Datensätze können vom
+Client vollständig in CSV oder eine Grafik übernommen werden; bei Glukoselücken keine durchgehende
+Messkurve vortäuschen. Für die Anzeige in lokaler Zeit Originalzeitstempel behalten und erst die Achse
+umrechnen, einschließlich Sommer-/Winterzeit.
+
+`trio_get_data_quality` liefert je Datenart Anzahl und ersten/letzten Zeitstempel. Für Glukose werden
+zusätzlich belegte 5-Minuten-Zeitfenster sowie Lücken über 7,5 Minuten ausgewiesen. Das ist eine
+Kadenzschätzung, keine bewiesene Sensorlaufzeit. Die Lückendetailliste ist auf 100 begrenzt und meldet
+weitere Lücken ausdrücklich; der Rohdatenabruf bleibt vollständig paginiert. `trio_compare_periods`
+akzeptiert `a` und `b`, jeweils mit `from`/`to`, und liefert Stichprobenstatistiken sowie Datenqualität.
+Diese Statistik nutzt die bestehenden Filter/Rundungen und ist nicht der Rohdatenexport.
+
+**Quellgrenzen:** Vollständigkeit bezieht sich auf empfangene Relay-Daten. Der bestehende iPhone-Export
+überträgt Zeitstempel sekundengenau, begrenzt Abfragen auf 20.000 Einträge je Core-Data-Entität und
+überträgt nach dem Erstabgleich inkrementell mit zwei Stunden Überlappung (frühestens alle 15 Minuten).
+Ältere nachträglich am iPhone ergänzte Daten sind damit nicht automatisch enthalten. Der Relay-Speicher
+führt Datensätze nach den bestehenden Zeitstempelschlüsseln zusammen. Die neuen Werkzeuge beweisen
+keinen lückenlosen iPhone-Export und ändern weder dessen Format noch die App. Beschädigte Verlaufsdateien
+werden als Fehler gemeldet und nicht als leerer Verlauf ausgegeben oder durch einen Upload überschrieben.
+
+Authentifizierte Relay-Endpunkte: `GET /api/history` und `GET /api/history/quality` mit denselben
+Abfrageparametern; `POST /api/history/compare` mit `{ "a": { "from": "…", "to": "…" }, "b": { "from": "…", "to": "…" } }`.
+Diese REST-Routen bleiben hinter der bestehenden Relay-Authentifizierung; Remote-Clients nutzen die
+gemeinsamen MCP-Werkzeuge über OAuth.
 
 ## Tests und API-Referenzen
 

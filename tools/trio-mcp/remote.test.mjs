@@ -9,6 +9,7 @@ import test from 'node:test'
 import { Client } from '@modelcontextprotocol/sdk/client/index.js'
 import { StreamableHTTPClientTransport } from '@modelcontextprotocol/sdk/client/streamableHttp.js'
 import { createMcpServer } from './mcp-server.mjs'
+import { getHistory } from './history.mjs'
 import { createRemoteApp } from './remote.mjs'
 
 const publicUrl = 'https://synthetic-trio.example'
@@ -106,6 +107,11 @@ test('SDK Streamable HTTP client uses shared tools through OAuth and closes each
   const { request, baseUrl } = await fixture(t, async () => {
     const server = await createMcpServer(async route => {
       calls.push(route)
+      if (route.startsWith('/api/history?')) {
+        const query = Object.fromEntries(new URL(route, 'http://local').searchParams)
+        if (query.limit) query.limit = Number(query.limit)
+        return getHistory({ glucose: [{ t: '2026-10-01T00:00:00.000Z', v: 123.456789 }] }, query)
+      }
       assert.equal(route, '/api/state')
       return { stateReceivedAt: new Date().toISOString(), state: { app: 'Trio', version: 'synthetic', build: '0', units: 'mg/dL', status: { glucose: 120 } } }
     })
@@ -122,12 +128,15 @@ test('SDK Streamable HTTP client uses shared tools through OAuth and closes each
   assert.match(client.getInstructions(), /current chat/)
   assert.equal(transport.sessionId, undefined)
   const tools = (await client.listTools()).tools
-  assert.equal(tools.length, 11)
+  assert.equal(tools.length, 16)
   assert.equal(tools.find(tool => tool.name === 'trio_get_status').annotations.readOnlyHint, true)
   const result = await client.callTool({ name: 'trio_get_status', arguments: {} })
   assert.equal(result.isError, undefined)
   assert.equal(JSON.parse(result.content[0].text).status.glucose, 120)
   assert.deepEqual(calls, ['/api/state'])
+  const raw = await client.callTool({ name: 'trio_get_history', arguments: { from: '2026-10-01T00:00:00Z', to: '2026-10-02T00:00:00Z' } })
+  assert.equal(raw.isError, undefined)
+  assert.deepEqual(JSON.parse(raw.content[0].text).data, [{ t: '2026-10-01T00:00:00.000Z', v: 123.456789 }])
   await new Promise(resolve => setImmediate(resolve))
   assert.ok(created >= 3)
   assert.equal(closed, created)

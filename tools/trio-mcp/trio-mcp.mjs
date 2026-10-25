@@ -31,13 +31,16 @@ import { validateSettingsPatch } from './settings.mjs'
 import { patchRelaySettings, relaySettings, withRelayCatalog } from './relay-settings.mjs'
 import { defaultSetupServer, writePrivateSetup } from './setup.mjs'
 import { createMcpServer } from './mcp-server.mjs'
+import { getHistory, getDataQuality, comparePeriods, HISTORY_KINDS } from './history.mjs'
 import { loadRemoteConfig, remoteInfo, setupRemote } from './remote-config.mjs'
+import { createMealStore } from './meals.mjs'
 
 const HOME = os.homedir()
 const DIR = process.env.TRIO_MCP_DIR || path.join(HOME, '.trio-mcp')
 const CONFIG_FILE = path.join(DIR, 'config.json')
 const DB_FILE = path.join(DIR, 'db.json')
 const HISTORY_FILE = path.join(DIR, 'history.json')
+const meals = createMealStore(DIR)
 const APP_FILE = path.join(path.dirname(fileURLToPath(import.meta.url)), 'app.html')
 const SCHEDULE_TARGETS = ['basal_profile', 'isf', 'carb_ratios', 'bg_targets']
 
@@ -65,7 +68,17 @@ function saveConfig(config) {
 }
 
 function loadHistory() {
-  try { return JSON.parse(fs.readFileSync(HISTORY_FILE, 'utf8')) } catch { return {} }
+  try {
+    const history = JSON.parse(fs.readFileSync(HISTORY_FILE, 'utf8'))
+    if (!history || typeof history !== 'object' || Array.isArray(history) ||
+        HISTORY_KINDS.some(kind => history[kind] !== undefined && !Array.isArray(history[kind]))) {
+      throw new Error('Invalid history shape')
+    }
+    return history
+  } catch (error) {
+    if (error.code === 'ENOENT') return {}
+    throw new Error('Stored history could not be read. Refusing to report empty history or overwrite it.')
+  }
 }
 
 function saveHistory(history) {
@@ -296,6 +309,9 @@ function serve() {
         saveHistory(merged)
         return send(res, 200, { ok: true, historyThrough: historyThrough(merged), glucose: merged.glucose.length })
       }
+      if (req.method === 'POST' && url.pathname === '/trio/meals') {
+        try { return send(res, 200, meals.upsert(body)) } catch (error) { return send(res, 400, { error: error.message }) }
+      }
       if (req.method === 'GET' && url.pathname === '/trio/proposals') {
         const status = url.searchParams.get('status')
         return send(res, 200, db.proposals.filter((p) => !status || p.status === status))
@@ -349,6 +365,23 @@ function serve() {
       }
       if (req.method === 'GET' && url.pathname === '/api/stats') {
         return send(res, 200, computeStats(loadHistory()))
+      }
+      if (req.method === 'GET' && ['/api/history', '/api/history/quality'].includes(url.pathname)) {
+        const query = Object.fromEntries(url.searchParams)
+        delete query.token
+        if (query.limit !== undefined) query.limit = Number(query.limit)
+        return send(res, 200, (url.pathname === '/api/history' ? getHistory : getDataQuality)(loadHistory(), query))
+      }
+      if (req.method === 'GET' && url.pathname === '/api/meals') {
+        const query = Object.fromEntries(url.searchParams)
+        for (const key of ['limit', 'offset']) if (query[key] !== undefined) query[key] = Number(query[key])
+        return send(res, 200, meals.list(query))
+      }
+      if (req.method === 'GET' && parts[0] === 'api' && parts[1] === 'meals' && parts[3] === 'photo' && parts.length === 4) {
+        return send(res, 200, meals.photo(parts[2]))
+      }
+      if (req.method === 'POST' && url.pathname === '/api/history/compare') {
+        return send(res, 200, comparePeriods(loadHistory(), body))
       }
       if (req.method === 'GET' && url.pathname === '/api/reports') {
         return send(res, 200, (db.reports || []).slice(-30).reverse())

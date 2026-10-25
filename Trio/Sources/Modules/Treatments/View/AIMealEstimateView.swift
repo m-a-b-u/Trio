@@ -9,8 +9,8 @@ import UIKit
 /// Nutrition estimate returned by the selected AI provider for a meal photo or description.
 /// The values are ONLY used to pre-fill the carb entry form. Nothing is logged
 /// or dosed until the user reviews the values and confirms in Trio as usual.
-struct AIMealEstimate: Decodable, Equatable {
-    struct Item: Decodable, Equatable, Identifiable {
+struct AIMealEstimate: Codable, Equatable {
+    struct Item: Codable, Equatable, Identifiable {
         var id: String { name + "\(grams ?? 0)" }
         let name: String
         let grams: Double?
@@ -49,6 +49,11 @@ enum AIMealProvider: String, CaseIterable, Identifiable {
         case .openAICompatible: return "OpenAI-kompatibel"
         case .appleIntelligence: return "Apple Intelligence (offline)"
         }
+    }
+
+    /// Anthropic and OpenAI offer a hosted web search tool; compatible endpoints have no common one.
+    var supportsWebSearch: Bool {
+        self == .anthropic || self == .openAI
     }
 }
 
@@ -112,6 +117,14 @@ enum AIMealSettingsStore {
         guard provider != .appleIntelligence else { return "" }
         let value = defaults.string(forKey: modelDefaultsKey(for: provider))?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
         return value.isEmpty && provider == .anthropic ? legacyDefaultModel : value
+    }
+
+    /// Lets cloud providers look up nutrition facts of branded products or restaurant dishes.
+    static let webSearchDefaultsKey = "ai.meal.webSearch"
+
+    static var webSearchEnabled: Bool {
+        get { UserDefaults.standard.bool(forKey: webSearchDefaultsKey) }
+        set { UserDefaults.standard.set(newValue, forKey: webSearchDefaultsKey) }
     }
 
     static func setModel(_ value: String, for provider: AIMealProvider) {
@@ -196,6 +209,7 @@ enum AIMealError: LocalizedError {
     case invalidURL
     case keychain
     case imageEncoding
+    case missingInput
     case http(Int)
     case emptyResponse
     case incompleteResponse
@@ -209,6 +223,7 @@ enum AIMealError: LocalizedError {
         case .invalidURL: return "Bitte eine gültige HTTPS-Basis-URL ohne Zugangsdaten, Query oder Fragment eintragen. HTTP ist nur für localhost erlaubt."
         case .keychain: return "Der API-Key konnte nicht im Schlüsselbund gespeichert werden."
         case .imageEncoding: return "Das Foto konnte nicht verarbeitet werden."
+        case .missingInput: return "Bitte ein Foto aufnehmen oder die Mahlzeit beschreiben."
         case let .http(code): return "KI-API Fehler \(code)."
         case .emptyResponse: return "Der KI-Anbieter hat keine auswertbare Antwort geliefert."
         case .incompleteResponse: return "Die KI-Antwort wurde nicht vollständig abgeschlossen. Bitte erneut versuchen."
@@ -220,11 +235,12 @@ enum AIMealError: LocalizedError {
 enum AIMealService {
     private static let systemPrompt = """
     You are a nutrition estimation assistant for a person with type 1 diabetes. \
-    Estimate the macronutrients of the meal in the photo as accurately as possible. \
-    Identify each food item, estimate its portion weight in grams (use plate, cutlery and \
-    hand sizes as scale references), and estimate carbohydrates, fat and protein in grams. \
+    Estimate the macronutrients of the meal in the photo and/or the user's description as accurately as possible. \
+    Identify each food item, estimate its portion weight in grams (in photos use plate, cutlery and \
+    hand sizes as scale references; in descriptions use the stated amounts), and estimate carbohydrates, \
+    fat and protein in grams. \
     Count only digestible carbohydrates (exclude fiber). Be conservative and do NOT round up. \
-    If the image does not show food or the portion is impossible to judge, return zeros and \
+    If the input does not show or describe food or the portion is impossible to judge, return zeros and \
     confidence "low" and explain why in notes. \
     Respond with ONLY a JSON object, no markdown, using exactly this schema: \
     {"items":[{"name":string,"grams":number,"carbs":number,"fat":number,"protein":number}],\
@@ -234,7 +250,25 @@ enum AIMealService {
     "short_note" is a max 20 character German label for the meal, may start with one emoji.
     """
 
-    static func makeRequest(configuration: AIMealConfiguration, apiKey: String?, jpeg: Data, userHint: String) throws -> URLRequest {
+    private static let webSearchPrompt = """
+    You may use web search to look up nutrition facts of branded products, packaged foods or restaurant \
+    dishes. Prefer official manufacturer or restaurant data. The final answer must still be ONLY the JSON object, \
+    and "notes" names the source when web data was used.
+    """
+
+    /// The dynamic-filtering variant exists for Opus 4.6+, Sonnet 4.6+ and later; older models keep the basic tool.
+    static func anthropicWebSearchType(model: String) -> String {
+        let current = ["opus-4-6", "opus-4-7", "opus-4-8", "opus-5", "sonnet-4-6", "sonnet-5"]
+        return current.contains { model.contains($0) } ? "web_search_20260209" : "web_search_20250305"
+    }
+
+    static func makeRequest(
+        configuration: AIMealConfiguration,
+        apiKey: String?,
+        jpeg: Data?,
+        userHint: String,
+        webSearch: Bool = false
+    ) throws -> URLRequest {
         let endpoint = try configuration.endpoint()
         let model = configuration.model.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !model.isEmpty else { throw AIMealError.missingModel }
@@ -242,45 +276,57 @@ enum AIMealService {
         guard configuration.provider == .openAICompatible || !key.isEmpty else {
             throw AIMealError.missingAPIKey
         }
-        guard !jpeg.isEmpty else { throw AIMealError.imageEncoding }
-        var prompt = "Schätze die Nährwerte dieser Mahlzeit."
+        if let jpeg, jpeg.isEmpty { throw AIMealError.imageEncoding }
         let hint = userHint.trimmingCharacters(in: .whitespacesAndNewlines)
-        if !hint.isEmpty { prompt += " Zusätzliche Info vom Nutzer: \(hint)" }
-        let image = jpeg.base64EncodedString()
+        guard jpeg != nil || !hint.isEmpty else { throw AIMealError.missingInput }
+        var prompt: String
+        if jpeg != nil {
+            prompt = "Schätze die Nährwerte dieser Mahlzeit."
+            if !hint.isEmpty { prompt += " Zusätzliche Info vom Nutzer: \(hint)" }
+        } else {
+            prompt = "Schätze die Nährwerte dieser Mahlzeit anhand der Beschreibung des Nutzers: \(hint)"
+        }
+        let image = jpeg?.base64EncodedString()
+        let search = webSearch && configuration.provider.supportsWebSearch
+        let instructions = search ? systemPrompt + " " + webSearchPrompt : systemPrompt
         var body: [String: Any]
         switch configuration.provider {
         case .appleIntelligence: throw AIMealError.onDeviceProvider
         case .anthropic:
+            var content: [[String: Any]] = []
+            if let image {
+                content.append(["type": "image", "source": ["type": "base64", "media_type": "image/jpeg", "data": image]])
+            }
+            content.append(["type": "text", "text": prompt])
             body = [
-                "model": model, "max_tokens": 1024, "system": systemPrompt,
-                "messages": [["role": "user", "content": [
-                    ["type": "image", "source": ["type": "base64", "media_type": "image/jpeg", "data": image]],
-                    ["type": "text", "text": prompt]
-                ]]]
+                "model": model, "max_tokens": search ? 4096 : 1024, "system": instructions,
+                "messages": [["role": "user", "content": content]]
             ]
+            if search {
+                body["tools"] = [["type": anthropicWebSearchType(model: model), "name": "web_search", "max_uses": 3]]
+            }
         case .openAI:
+            var content: [[String: Any]] = [["type": "input_text", "text": prompt]]
+            if let image { content.append(["type": "input_image", "image_url": "data:image/jpeg;base64,\(image)"]) }
             body = [
-                "model": model, "instructions": systemPrompt, "store": false, "max_output_tokens": 4096,
-                "input": [["role": "user", "content": [
-                    ["type": "input_text", "text": prompt],
-                    ["type": "input_image", "image_url": "data:image/jpeg;base64,\(image)"]
-                ]]]
+                "model": model, "instructions": instructions, "store": false, "max_output_tokens": search ? 8192 : 4096,
+                "input": [["role": "user", "content": content]]
             ]
+            if search { body["tools"] = [["type": "web_search"]] }
         case .openAICompatible:
+            var content: [[String: Any]] = [["type": "text", "text": prompt]]
+            if let image { content.append(["type": "image_url", "image_url": ["url": "data:image/jpeg;base64,\(image)"]]) }
             body = [
                 "model": model, "max_tokens": 1024,
                 "messages": [
                     ["role": "system", "content": systemPrompt],
-                    ["role": "user", "content": [
-                        ["type": "text", "text": prompt],
-                        ["type": "image_url", "image_url": ["url": "data:image/jpeg;base64,\(image)"]]
-                    ]]
+                    ["role": "user", "content": content]
                 ]
             ]
         }
         var request = URLRequest(url: endpoint)
         request.httpMethod = "POST"
-        request.timeoutInterval = 60
+        request.timeoutInterval = search ? 120 : 60
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
         if configuration.provider == .anthropic {
             request.setValue(key, forHTTPHeaderField: "x-api-key")
@@ -303,8 +349,12 @@ enum AIMealService {
         switch provider {
         case .appleIntelligence: throw AIMealError.onDeviceProvider
         case .anthropic:
-            if object["stop_reason"] as? String == "max_tokens" { throw AIMealError.incompleteResponse }
-            let blocks = object["content"] as? [[String: Any]] ?? []
+            if ["max_tokens", "pause_turn"].contains(object["stop_reason"] as? String) { throw AIMealError.incompleteResponse }
+            var blocks = object["content"] as? [[String: Any]] ?? []
+            // With web search the model may narrate before searching; the answer follows the last result.
+            if let lastResult = blocks.lastIndex(where: { $0["type"] as? String == "web_search_tool_result" }) {
+                blocks = Array(blocks[(lastResult + 1)...])
+            }
             answer = blocks.filter { $0["type"] as? String == "text" }.compactMap { $0["text"] as? String }.joined()
         case .openAI:
             guard object["status"] as? String == "completed" else { throw AIMealError.incompleteResponse }
@@ -346,22 +396,36 @@ enum AIMealService {
         image: UIImage?, userHint: String,
         configuration: AIMealConfiguration = AIMealSettingsStore.currentConfiguration
     ) async throws -> AIMealEstimate {
+        try await analyze(image: image, userHint: userHint, configuration: configuration).estimate
+    }
+
+    /// The estimate together with the exact JPEG sent to the provider, for the meal log.
+    static func analyze(
+        image: UIImage?, userHint: String,
+        configuration: AIMealConfiguration = AIMealSettingsStore.currentConfiguration,
+        webSearch: Bool = false
+    ) async throws -> (estimate: AIMealEstimate, jpeg: Data?) {
         if configuration.provider == .appleIntelligence {
-            return try await AppleIntelligenceMealService.estimate(description: userHint)
+            return (try await AppleIntelligenceMealService.estimate(description: userHint), nil)
         }
-        guard let image else { throw AIMealError.imageEncoding }
-        guard let jpeg = downscaled(image, maxDimension: 1280).jpegData(compressionQuality: 0.8)
-        else { throw AIMealError.imageEncoding }
+        var jpeg: Data?
+        if let image {
+            guard let data = downscaled(image, maxDimension: 1280).jpegData(compressionQuality: 0.8)
+            else { throw AIMealError.imageEncoding }
+            jpeg = data
+        }
         let request = try makeRequest(
             configuration: configuration,
             apiKey: AIMealSettingsStore.apiKey(for: configuration.provider, baseURL: configuration.baseURL),
             jpeg: jpeg,
-            userHint: userHint
+            userHint: userHint,
+            webSearch: webSearch
         )
         let session = URLSession(configuration: .ephemeral, delegate: AIMealRedirectDelegate(), delegateQueue: nil)
         defer { session.invalidateAndCancel() }
         let (data, response) = try await session.data(for: request)
-        return try parseResponse(data, status: (response as? HTTPURLResponse)?.statusCode ?? 0, provider: configuration.provider)
+        let estimate = try parseResponse(data, status: (response as? HTTPURLResponse)?.statusCode ?? 0, provider: configuration.provider)
+        return (estimate, jpeg)
     }
 
     private static func downscaled(_ image: UIImage, maxDimension: CGFloat) -> UIImage {
@@ -576,6 +640,8 @@ struct AIMealEstimateView: View {
     @State private var analysisTask: Task<Void, Never>?
     @State private var errorText: String?
     @State private var estimate: AIMealEstimate?
+    @State private var loggedMealID: UUID?
+    @AppStorage(AIMealSettingsStore.webSearchDefaultsKey) private var webSearch = false
 
     @State private var carbs: Double = 0
     @State private var fat: Double = 0
@@ -598,8 +664,11 @@ struct AIMealEstimateView: View {
     }
 
     private var hasInput: Bool {
-        usesAppleIntelligence ? !hint.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty : image != nil
+        let hasText = !hint.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+        return usesAppleIntelligence ? hasText : (image != nil || hasText)
     }
+
+    private var usesWebSearch: Bool { webSearch && configuration.provider.supportsWebSearch }
 
     var body: some View {
         NavigationStack {
@@ -610,8 +679,16 @@ struct AIMealEstimateView: View {
                         Text(appleAvailability.message).font(.footnote)
                             .foregroundColor(appleAvailability.available ? .secondary : .orange)
                     }
+                    if configuration.provider.supportsWebSearch {
+                        Toggle("Websuche", isOn: $webSearch)
+                            .disabled(isLoading)
+                    }
                     if !isConfigured {
                         Button("KI-Anbieter einrichten") { showSettings = true }
+                    }
+                } footer: {
+                    if usesWebSearch {
+                        Text("Der Anbieter darf Nährwerte von Markenprodukten und Restaurantgerichten im Web nachschlagen. Das dauert länger und kann zusätzliche Kosten verursachen.")
                     }
                 }
 
@@ -636,13 +713,15 @@ struct AIMealEstimateView: View {
                     }
                     TextField(usesAppleIntelligence
                         ? "Mahlzeit und Menge, z.B. 150 g gekochte Nudeln mit 50 g Tomatensauce"
-                        : "Hinweis (optional, z.B. „ca. 300 g Nudeln“)", text: $hint, axis: .vertical)
+                        : "Beschreibung oder Hinweis, z.B. „300 g Spaghetti Bolognese“", text: $hint, axis: .vertical)
                     if usesAppleIntelligence {
                         Text("\(hint.count)/2000 Zeichen").font(.caption).foregroundStyle(.secondary)
                     }
                 } header: { Text("Mahlzeit") } footer: {
                     if usesAppleIntelligence {
                         Text("Offline auf diesem iPhone. Beschreibe Lebensmittel, Zubereitung und verzehrte Menge. Fotos werden nicht analysiert. Die Schätzung wird anschließend zur Prüfung angezeigt.")
+                    } else {
+                        Text("Foto, Beschreibung oder beides. Ohne Foto wird nur der Text an den Anbieter gesendet.")
                     }
                 }
                 .disabled(isLoading || isLoadingPhoto)
@@ -726,6 +805,10 @@ struct AIMealEstimateView: View {
                 estimate = nil
                 errorText = nil
             }
+            .onChange(of: webSearch) { _, _ in
+                estimate = nil
+                errorText = nil
+            }
             .onChange(of: scenePhase) { _, phase in
                 if phase == .active { appleAvailability = AppleIntelligenceMealService.availability }
             }
@@ -777,7 +860,13 @@ struct AIMealEstimateView: View {
             }
             TextField("Notiz", text: $note)
             Button {
-                onApply(Decimal(Int(carbs)), Decimal(Int(fat)), Decimal(Int(protein)), String(note.prefix(25)))
+                let appliedNote = String(note.prefix(25))
+                if let loggedMealID {
+                    AIMealLogStore.shared.markApplied(
+                        loggedMealID, carbs: Double(Int(carbs)), fat: Double(Int(fat)), protein: Double(Int(protein)), note: appliedNote
+                    )
+                }
+                onApply(Decimal(Int(carbs)), Decimal(Int(fat)), Decimal(Int(protein)), appliedNote)
                 dismiss()
             } label: {
                 Text("In Eingabe übernehmen").frame(maxWidth: .infinity).bold()
@@ -802,14 +891,29 @@ struct AIMealEstimateView: View {
         let requestedConfiguration = configuration
         let requestedImage = image
         let requestedHint = hint
+        let requestedWebSearch = usesWebSearch
         isLoading = true
         errorText = nil
         estimate = nil
+        loggedMealID = nil
         defer { isLoading = false }
         do {
-            let result = try await AIMealService.estimate(image: requestedImage, userHint: requestedHint, configuration: requestedConfiguration)
+            let (result, jpeg) = try await AIMealService.analyze(
+                image: usesAppleIntelligence ? nil : requestedImage,
+                userHint: requestedHint,
+                configuration: requestedConfiguration,
+                webSearch: requestedWebSearch
+            )
             try Task.checkCancellation()
-            guard configuration == requestedConfiguration, image == requestedImage, hint == requestedHint else { return }
+            guard configuration == requestedConfiguration, image == requestedImage, hint == requestedHint,
+                  usesWebSearch == requestedWebSearch else { return }
+            loggedMealID = AIMealLogStore.shared.record(
+                estimate: result,
+                configuration: requestedConfiguration,
+                webSearch: requestedWebSearch,
+                description: requestedHint,
+                jpeg: jpeg
+            )
             estimate = result
             carbs = result.carbs.rounded()
             fat = result.fat.rounded()

@@ -627,6 +627,7 @@
 		567C4A7A4CA064021EA7F3E4 /* Disk.swift in Sources */ = {isa = PBXBuildFile; fileRef = 38E4452C274E411600EC9A94 /* Disk.swift */; };
 		5694A9D500E713DEBC6F2FB6 /* HomeRootView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 3811DE2E25C9D49500A708ED /* HomeRootView.swift */; };
 		5742F99A0543ACA01792E9D2 /* OnboardingManager.swift in Sources */ = {isa = PBXBuildFile; fileRef = BD47FD122D88AA6B0043966B /* OnboardingManager.swift */; };
+		23CA3F3C817D54AFEBAE9FB5 /* DeviceStateBackup.swift in Sources */ = {isa = PBXBuildFile; fileRef = 7B10CBAE8F2A64EE29FE52D8 /* DeviceStateBackup.swift */; };
 		57849D1CB49C990095A5BD50 /* BatterySetup.swift in Sources */ = {isa = PBXBuildFile; fileRef = 58645BA22CA2D325008AFCE7 /* BatterySetup.swift */; };
 		581516A42BCED84A00BF67D7 /* DebuggingIdentifiers.swift in Sources */ = {isa = PBXBuildFile; fileRef = 581516A32BCED84A00BF67D7 /* DebuggingIdentifiers.swift */; };
 		581516A92BCEEDF800BF67D7 /* NSPredicates.swift in Sources */ = {isa = PBXBuildFile; fileRef = 581516A82BCEEDF800BF67D7 /* NSPredicates.swift */; };
@@ -991,6 +992,7 @@
 		A9AA25A1D40569C29E461997 /* TrioUserNotificationAlertScheduler.swift in Sources */ = {isa = PBXBuildFile; fileRef = BD1179252F4E22C100F90001 /* TrioUserNotificationAlertScheduler.swift */; };
 		A9FA314B0890BD5B692257A2 /* Screen.swift in Sources */ = {isa = PBXBuildFile; fileRef = 3811DE1525C9D40400A708ED /* Screen.swift */; };
 		AA1C1A0D2EB0000200C1A0D1 /* AIMealEstimateView.swift in Sources */ = {isa = PBXBuildFile; fileRef = AA1C1A0D2EB0000100C1A0D1 /* AIMealEstimateView.swift */; };
+		DC25F3D509A892712BCF8441 /* AIMealLog.swift in Sources */ = {isa = PBXBuildFile; fileRef = 222DCFDF105F8BF378796B7C /* AIMealLog.swift */; };
 		AA1C1A0D2EB0000400C1A0D1 /* ClaudeBridgeView.swift in Sources */ = {isa = PBXBuildFile; fileRef = AA1C1A0D2EB0000300C1A0D1 /* ClaudeBridgeView.swift */; };
 		AA1C1A0D2EB0000600C1A0D1 /* ClaudeBridgeDiffTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = AA1C1A0D2EB0000500C1A0D1 /* ClaudeBridgeDiffTests.swift */; };
 		AA1C1A0D2EB0000800C1A0D1 /* AIMealProviderTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = AA1C1A0D2EB0000700C1A0D1 /* AIMealProviderTests.swift */; };
@@ -999,6 +1001,8 @@
 		AA1C1A0D2EB0000E00C1A0D1 /* AIAdditionalSettingsTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = AA1C1A0D2EB0000D00C1A0D1 /* AIAdditionalSettingsTests.swift */; };
 		AA1C1A0D2EB0001000C1A0D1 /* AIBridgeSetup.swift in Sources */ = {isa = PBXBuildFile; fileRef = AA1C1A0D2EB0000F00C1A0D1 /* AIBridgeSetup.swift */; };
 		AA1C1A0D2EB0001200C1A0D1 /* AIBridgeSetupTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = AA1C1A0D2EB0001100C1A0D1 /* AIBridgeSetupTests.swift */; };
+		21D7774B0C47B67EA08EDB38 /* AIMealLogTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 182A8EB411F79741F8D07880 /* AIMealLogTests.swift */; };
+		9867A2B25D887E1119B46268 /* DeviceStateBackupTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 53ADE7C01A9FDD77FE5C0B11 /* DeviceStateBackupTests.swift */; };
 		AA1C1A0D2EB0001400C1A0D1 /* AppleIntelligenceMealService.swift in Sources */ = {isa = PBXBuildFile; fileRef = AA1C1A0D2EB0001300C1A0D1 /* AppleIntelligenceMealService.swift */; };
 		AA1C1A0D2EB0001600C1A0D1 /* AppleIntelligenceMealTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = AA1C1A0D2EB0001500C1A0D1 /* AppleIntelligenceMealTests.swift */; };
 		AA3B9B1A2E5315B0F7F5ED33 /* APSManager.swift in Sources */ = {isa = PBXBuildFile; fileRef = 3811DF0F25CAAAE200A708ED /* APSManager.swift */; };
@@ -1025,6 +1029,7 @@
 		AEE4537091D1FE1DD406EFEB /* QuickPickTreatmentsConfigStateModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = 91711E7CA54747EFAD6540EE /* QuickPickTreatmentsConfigStateModel.swift */; };
 		AFD26932968524372A398507 /* GlucoseTargetStepView.swift in Sources */ = {isa = PBXBuildFile; fileRef = BD47FDDC2D8B65AD0043966B /* GlucoseTargetStepView.swift */; };
 		AFD326C4FA642805B035F2BA /* OnboardingRootView.swift in Sources */ = {isa = PBXBuildFile; fileRef = BD47FD182D88AAF90043966B /* OnboardingRootView.swift */; };
+		68F0C5A13EDCB1BCAB4C8DC4 /* DeviceStateRestoreView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 7A6796E6FBBE931414FCB428 /* DeviceStateRestoreView.swift */; };
 		B0058D2C94700503D2334425 /* BasalProfileEditorStateModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = AAFF91130F2FCCC7EBBA11AD /* BasalProfileEditorStateModel.swift */; };
 		B015AFE32E500000000D7351 /* BolusSafetyValidator.swift in Sources */ = {isa = PBXBuildFile; fileRef = B015AFE12E500000000D7351 /* BolusSafetyValidator.swift */; };
 		B015AFE52E500000000D7351 /* BolusSafetyValidatorTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = B015AFE42E500000000D7351 /* BolusSafetyValidatorTests.swift */; };
@@ -1182,8 +1187,10 @@
 		BD432CA12D2F4E3600D1EB79 /* WatchMessageKeys.swift in Sources */ = {isa = PBXBuildFile; fileRef = BD432CA02D2F4E3300D1EB79 /* WatchMessageKeys.swift */; };
 		BD432CA22D2F4E4000D1EB79 /* WatchMessageKeys.swift in Sources */ = {isa = PBXBuildFile; fileRef = BD432CA02D2F4E3300D1EB79 /* WatchMessageKeys.swift */; };
 		BD47FD132D88AA700043966B /* OnboardingManager.swift in Sources */ = {isa = PBXBuildFile; fileRef = BD47FD122D88AA6B0043966B /* OnboardingManager.swift */; };
+		F807E85606C1DA48A751D0B9 /* DeviceStateBackup.swift in Sources */ = {isa = PBXBuildFile; fileRef = 7B10CBAE8F2A64EE29FE52D8 /* DeviceStateBackup.swift */; };
 		BD47FD172D88AAF50043966B /* CompletedStepView.swift in Sources */ = {isa = PBXBuildFile; fileRef = BD47FD162D88AAEF0043966B /* CompletedStepView.swift */; };
 		BD47FD192D88AAFE0043966B /* OnboardingRootView.swift in Sources */ = {isa = PBXBuildFile; fileRef = BD47FD182D88AAF90043966B /* OnboardingRootView.swift */; };
+		D19C43664E8B52690A9D79E4 /* DeviceStateRestoreView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 7A6796E6FBBE931414FCB428 /* DeviceStateRestoreView.swift */; };
 		BD47FD1B2D88AB4F0043966B /* OnboardingStateModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = BD47FD1A2D88AB4A0043966B /* OnboardingStateModel.swift */; };
 		BD47FDD72D8B64D20043966B /* CarbRatioStepView.swift in Sources */ = {isa = PBXBuildFile; fileRef = BD47FDD62D8B64CC0043966B /* CarbRatioStepView.swift */; };
 		BD47FDD92D8B657D0043966B /* InsulinSensitivityStepView.swift in Sources */ = {isa = PBXBuildFile; fileRef = BD47FDD82D8B65730043966B /* InsulinSensitivityStepView.swift */; };
@@ -1315,6 +1322,7 @@
 		C4E149609BA18236E73235BC /* ForecastGenerator+Forecasts.swift in Sources */ = {isa = PBXBuildFile; fileRef = DD30B9CD2E062AA300DA677C /* ForecastGenerator+Forecasts.swift */; };
 		C50B581E0978FF59B5BAF022 /* AppearanceManager.swift in Sources */ = {isa = PBXBuildFile; fileRef = 3811DE9325C9D88200A708ED /* AppearanceManager.swift */; };
 		C53701703326477DBF08075F /* AIMealEstimateView.swift in Sources */ = {isa = PBXBuildFile; fileRef = AA1C1A0D2EB0000100C1A0D1 /* AIMealEstimateView.swift */; };
+		3418ABB3E8DF7E7788415175 /* AIMealLog.swift in Sources */ = {isa = PBXBuildFile; fileRef = 222DCFDF105F8BF378796B7C /* AIMealLog.swift */; };
 		C546DC0EFA126FEC0BA981B5 /* Isf.swift in Sources */ = {isa = PBXBuildFile; fileRef = 3B5CD2932D4AEA3C00CE213C /* Isf.swift */; };
 		C5B532941E13EE97029E3471 /* JSONConverter.swift in Sources */ = {isa = PBXBuildFile; fileRef = 581AC4382BE22ED10038760C /* JSONConverter.swift */; };
 		C5BAAA36C643401D97A8CE11 /* QuickPickTreatmentsConfigRootView.swift in Sources */ = {isa = PBXBuildFile; fileRef = DB3EBC8BA17C4627BD32C58F /* QuickPickTreatmentsConfigRootView.swift */; };
@@ -2473,6 +2481,7 @@
 		A401509D21F7F35D4E109EDA /* HistoryDataFlow.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = HistoryDataFlow.swift; sourceTree = "<group>"; };
 		A8630D58BDAD6D9C650B9B39 /* PumpConfigProvider.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = PumpConfigProvider.swift; sourceTree = "<group>"; };
 		AA1C1A0D2EB0000100C1A0D1 /* AIMealEstimateView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AIMealEstimateView.swift; sourceTree = "<group>"; };
+		222DCFDF105F8BF378796B7C /* AIMealLog.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AIMealLog.swift; sourceTree = "<group>"; };
 		AA1C1A0D2EB0000300C1A0D1 /* ClaudeBridgeView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ClaudeBridgeView.swift; sourceTree = "<group>"; };
 		AA1C1A0D2EB0000500C1A0D1 /* ClaudeBridgeDiffTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ClaudeBridgeDiffTests.swift; sourceTree = "<group>"; };
 		AA1C1A0D2EB0000700C1A0D1 /* AIMealProviderTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AIMealProviderTests.swift; sourceTree = "<group>"; };
@@ -2481,6 +2490,8 @@
 		AA1C1A0D2EB0000D00C1A0D1 /* AIAdditionalSettingsTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AIAdditionalSettingsTests.swift; sourceTree = "<group>"; };
 		AA1C1A0D2EB0000F00C1A0D1 /* AIBridgeSetup.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AIBridgeSetup.swift; sourceTree = "<group>"; };
 		AA1C1A0D2EB0001100C1A0D1 /* AIBridgeSetupTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AIBridgeSetupTests.swift; sourceTree = "<group>"; };
+		182A8EB411F79741F8D07880 /* AIMealLogTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AIMealLogTests.swift; sourceTree = "<group>"; };
+		53ADE7C01A9FDD77FE5C0B11 /* DeviceStateBackupTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DeviceStateBackupTests.swift; sourceTree = "<group>"; };
 		AA1C1A0D2EB0001300C1A0D1 /* AppleIntelligenceMealService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppleIntelligenceMealService.swift; sourceTree = "<group>"; };
 		AA1C1A0D2EB0001500C1A0D1 /* AppleIntelligenceMealTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppleIntelligenceMealTests.swift; sourceTree = "<group>"; };
 		AABB00012C54389F00211FAC /* TreatmentsSettingsView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TreatmentsSettingsView.swift; sourceTree = "<group>"; };
@@ -2604,8 +2615,10 @@
 		BD4064D02C4ED26900582F43 /* CoreDataObserver.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CoreDataObserver.swift; sourceTree = "<group>"; };
 		BD432CA02D2F4E3300D1EB79 /* WatchMessageKeys.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WatchMessageKeys.swift; sourceTree = "<group>"; };
 		BD47FD122D88AA6B0043966B /* OnboardingManager.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = OnboardingManager.swift; sourceTree = "<group>"; };
+		7B10CBAE8F2A64EE29FE52D8 /* DeviceStateBackup.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DeviceStateBackup.swift; sourceTree = "<group>"; };
 		BD47FD162D88AAEF0043966B /* CompletedStepView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CompletedStepView.swift; sourceTree = "<group>"; };
 		BD47FD182D88AAF90043966B /* OnboardingRootView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = OnboardingRootView.swift; sourceTree = "<group>"; };
+		7A6796E6FBBE931414FCB428 /* DeviceStateRestoreView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DeviceStateRestoreView.swift; sourceTree = "<group>"; };
 		BD47FD1A2D88AB4A0043966B /* OnboardingStateModel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = OnboardingStateModel.swift; sourceTree = "<group>"; };
 		BD47FDD62D8B64CC0043966B /* CarbRatioStepView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CarbRatioStepView.swift; sourceTree = "<group>"; };
 		BD47FDD82D8B65730043966B /* InsulinSensitivityStepView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = InsulinSensitivityStepView.swift; sourceTree = "<group>"; };
@@ -4412,6 +4425,8 @@
 				AA1C1A0D2EB0000500C1A0D1 /* ClaudeBridgeDiffTests.swift */,
 				AA1C1A0D2EB0000D00C1A0D1 /* AIAdditionalSettingsTests.swift */,
 				AA1C1A0D2EB0001100C1A0D1 /* AIBridgeSetupTests.swift */,
+				182A8EB411F79741F8D07880 /* AIMealLogTests.swift */,
+				53ADE7C01A9FDD77FE5C0B11 /* DeviceStateBackupTests.swift */,
 				AA1C1A0D2EB0000900C1A0D1 /* ClaudeSettingsCatalogTests.swift */,
 				AA1C1A0D2EB0000700C1A0D1 /* AIMealProviderTests.swift */,
 				AA1C1A0D2EB0001500C1A0D1 /* AppleIntelligenceMealTests.swift */,
@@ -4811,6 +4826,7 @@
 				BDFD16592AE40438007F0DDA /* TreatmentsRootView.swift */,
 				58237D9D2BCF0A6B00A47A79 /* PopupView.swift */,
 				AA1C1A0D2EB0000100C1A0D1 /* AIMealEstimateView.swift */,
+				222DCFDF105F8BF378796B7C /* AIMealLog.swift */,
 				AA1C1A0D2EB0001300C1A0D1 /* AppleIntelligenceMealService.swift */,
 				BDB899872C564509006F3298 /* ForecastChart.swift */,
 				DD07CA5A2CE950B9002D45A9 /* MealPreset */,
@@ -4979,6 +4995,7 @@
 			isa = PBXGroup;
 			children = (
 				BD47FD122D88AA6B0043966B /* OnboardingManager.swift */,
+				7B10CBAE8F2A64EE29FE52D8 /* DeviceStateBackup.swift */,
 			);
 			path = OnboardingManager;
 			sourceTree = "<group>";
@@ -5003,6 +5020,7 @@
 				DD3F1F882D9E078300DCE7B3 /* TherapySettingEditorView.swift */,
 				DDC38E0F2D9B376900ADCB46 /* OnboardingView+Util.swift */,
 				BD47FD182D88AAF90043966B /* OnboardingRootView.swift */,
+				7A6796E6FBBE931414FCB428 /* DeviceStateRestoreView.swift */,
 				BD47FDD52D8B64AE0043966B /* OnboardingSteps */,
 			);
 			path = View;
@@ -6649,6 +6667,7 @@
 				6A9FC0B61C37BA5E84920F45 /* GlucoseSource.swift in Sources */,
 				07EABDD998DB5794F66066A5 /* CalibrationsStateModel.swift in Sources */,
 				AFD326C4FA642805B035F2BA /* OnboardingRootView.swift in Sources */,
+				68F0C5A13EDCB1BCAB4C8DC4 /* DeviceStateRestoreView.swift in Sources */,
 				13CB8F3C8350C49E6A493925 /* BluetoothStateManager.swift in Sources */,
 				BD73E87C9B2D66FC55A42297 /* OverrideStorage.swift in Sources */,
 				AE9D2251FDBB5839C1DEB486 /* SettingsDataFlow.swift in Sources */,
@@ -6825,6 +6844,7 @@
 				3E567C7297EABCDE5508487E /* CGMSettingsView.swift in Sources */,
 				130DC7CCF06DCB7589E895E4 /* PopupView.swift in Sources */,
 				C53701703326477DBF08075F /* AIMealEstimateView.swift in Sources */,
+				3418ABB3E8DF7E7788415175 /* AIMealLog.swift in Sources */,
 				85616AF5BC61A8AFCCEC6ABC /* AppleIntelligenceMealService.swift in Sources */,
 				04265045A9C4AB79AFAE7DCA /* OverrideRunStored+helper.swift in Sources */,
 				4E9A9DC36F19AB377B6ACCD1 /* HomeStateModel+CGM.swift in Sources */,
@@ -7065,6 +7085,7 @@
 				3095A9A347C39431EAE89DEA /* FontExtensions.swift in Sources */,
 				63AE893DC49875C1783A3D1D /* InsulinView.swift in Sources */,
 				5742F99A0543ACA01792E9D2 /* OnboardingManager.swift in Sources */,
+				23CA3F3C817D54AFEBAE9FB5 /* DeviceStateBackup.swift in Sources */,
 				C78B63320EB780E020987E6C /* BluetoothTransmitter.swift in Sources */,
 				E15A8484E6589AD34CF857E4 /* NightscoutExercise.swift in Sources */,
 				74FD273EE598030C07EA7693 /* DeterminationStorage.swift in Sources */,
@@ -7405,6 +7426,7 @@
 				38569348270B5DFB0002C50D /* GlucoseSource.swift in Sources */,
 				CEE9A6582BBB418300EB5194 /* CalibrationsStateModel.swift in Sources */,
 				BD47FD192D88AAFE0043966B /* OnboardingRootView.swift in Sources */,
+				D19C43664E8B52690A9D79E4 /* DeviceStateRestoreView.swift in Sources */,
 				CEB434E328B8F9DB00B70274 /* BluetoothStateManager.swift in Sources */,
 				BDC2EA452C3043B000E5BBD0 /* OverrideStorage.swift in Sources */,
 				3811DE4225C9D4A100A708ED /* SettingsDataFlow.swift in Sources */,
@@ -7581,6 +7603,7 @@
 				CE7950242997D81700FA576E /* CGMSettingsView.swift in Sources */,
 				58237D9E2BCF0A6B00A47A79 /* PopupView.swift in Sources */,
 				AA1C1A0D2EB0000200C1A0D1 /* AIMealEstimateView.swift in Sources */,
+				DC25F3D509A892712BCF8441 /* AIMealLog.swift in Sources */,
 				AA1C1A0D2EB0001400C1A0D1 /* AppleIntelligenceMealService.swift in Sources */,
 				BD793CB02CE7C61500D669AC /* OverrideRunStored+helper.swift in Sources */,
 				3B4196E02D8C4BC00091DFF7 /* HomeStateModel+CGM.swift in Sources */,
@@ -7821,6 +7844,7 @@
 				DDB37CC72D05127500D99BF4 /* FontExtensions.swift in Sources */,
 				582DF9772C8CDBE7001F516D /* InsulinView.swift in Sources */,
 				BD47FD132D88AA700043966B /* OnboardingManager.swift in Sources */,
+				F807E85606C1DA48A751D0B9 /* DeviceStateBackup.swift in Sources */,
 				F816826028DB441800054060 /* BluetoothTransmitter.swift in Sources */,
 				DD68889D2C386E17006E3C44 /* NightscoutExercise.swift in Sources */,
 				5864E8592C42CFAE00294306 /* DeterminationStorage.swift in Sources */,
@@ -8141,6 +8165,8 @@
 				AA1C1A0D2EB0000600C1A0D1 /* ClaudeBridgeDiffTests.swift in Sources */,
 				AA1C1A0D2EB0000E00C1A0D1 /* AIAdditionalSettingsTests.swift in Sources */,
 				AA1C1A0D2EB0001200C1A0D1 /* AIBridgeSetupTests.swift in Sources */,
+				21D7774B0C47B67EA08EDB38 /* AIMealLogTests.swift in Sources */,
+				9867A2B25D887E1119B46268 /* DeviceStateBackupTests.swift in Sources */,
 				AA1C1A0D2EB0000A00C1A0D1 /* ClaudeSettingsCatalogTests.swift in Sources */,
 				AA1C1A0D2EB0000800C1A0D1 /* AIMealProviderTests.swift in Sources */,
 				AA1C1A0D2EB0001600C1A0D1 /* AppleIntelligenceMealTests.swift in Sources */,

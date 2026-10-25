@@ -1,4 +1,6 @@
 // Shared MCP tools for local stdio and authenticated remote clients.
+import { historyShape, rangeShape, compareShape } from './history.mjs'
+import { mealsShape, mealPhotoShape } from './meals.mjs'
 const SCHEDULE_TARGETS = ['basal_profile', 'isf', 'carb_ratios', 'bg_targets']
 
 export async function createMcpServer(api) {
@@ -15,12 +17,53 @@ export async function createMcpServer(api) {
       'Analyze Trio data directly in the current chat using the read tools. No additional AI provider API key is required for this MCP chat workflow.',
       'Proposals do not apply changes. The user must review the diff and approve locally in Trio; check proposal status before claiming a change was applied.',
       'Read status, settings and history statistics as needed; report the snapshot age and data coverage. These are synced snapshots, not live readings; request a fresh iPhone sync if current data is needed.',
+      'For exact charts use trio_get_history, not aggregated statistics. Collect every page until nextCursor is null and verify the collected count equals total. Never invent missing values, interpolate or downsample silently. All pages must share one revision; restart if history changed. Check trio_get_data_quality and label times and units.',
       'Read trio_get_settings_catalog before proposing changes and respect its types, constraints and local-only actions.',
       'trio_run_daily_analysis is a separate optional Mac-side API job using its configured provider credentials. Run it only when the user explicitly requests that separate daily analysis, never merely to analyze data in this chat.'
     ].join(' ')
   })
   const readOnly = { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false }
   const proposal = { readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: false }
+
+  server.tool(
+    'trio_get_history',
+    'Exact synced history for charts: glucose, carbs, boluses, tempBasals, determinations (IOB/COB and loop fields), or tdd. Original relay records without rounding, interpolation or averaging. Default last 30 days; explicit ISO timestamps need timezone; [from,to), maximum 30 days. Fetch ALL pages: first call kind/from/to/limit, then ONLY cursor=nextCursor and optional limit until null; check count against total and stable revision. A changed dataset requires restarting. Completeness only covers synced relay data, not all phone data. Glucose remains mg/dL even when the app displays mmol/L.',
+    historyShape, readOnly,
+    guard(async args => text(await api('/api/history?' + new URLSearchParams(args))))
+  )
+  server.tool(
+    'trio_get_data_quality',
+    'Counts, first/last timestamps, duplicate timestamps and glucose gaps for a range (default last 30 days). 5-minute bin coverage is an estimate, not proven sensor uptime. Reports missing leading/trailing data and explicit gap-list truncation. Does not fetch fresh iPhone data.',
+    rangeShape, readOnly,
+    guard(async args => text(await api('/api/history/quality?' + new URLSearchParams(args))))
+  )
+  server.tool(
+    'trio_compare_periods',
+    'Compare two explicit time windows, at most 30 days each: sample-based glucose statistics and data quality, with differences B minus A. No causal conclusion or therapy recommendation. Use trio_get_history for exact raw charts; these statistics are rounded and filtered like trio_get_history_stats.',
+    compareShape, readOnly,
+    guard(async args => text(await api('/api/history/compare', { method: 'POST', body: JSON.stringify(args) })))
+  )
+
+  server.tool(
+    'trio_get_meals',
+    'AI meal analyses logged in Trio (photo and/or text description, provider, web search flag, item breakdown, AI estimate and the values the user actually applied). Newest first; page with offset until nextOffset is null. Optional ISO from/to with timezone. Synced from the iPhone with the KI-Bridge; meals analyzed while the bridge was off appear after the next sync.',
+    mealsShape, readOnly,
+    guard(async args => text(await api('/api/meals?' + new URLSearchParams(Object.entries(args).filter(([, v]) => v !== undefined)))))
+  )
+  server.tool(
+    'trio_get_meal_photo',
+    'The original meal photo (JPEG) of one logged AI meal, by id from trio_get_meals. Text-only analyses have no photo.',
+    mealPhotoShape, readOnly,
+    guard(async ({ id }) => {
+      const { meal, mimeType, data } = await api(`/api/meals/${encodeURIComponent(id)}/photo`)
+      return {
+        content: [
+          { type: 'image', data, mimeType },
+          { type: 'text', text: JSON.stringify({ id: meal.id, createdAt: meal.createdAt, description: meal.description, estimate: meal.estimate, applied: meal.applied }, null, 2) }
+        ]
+      }
+    })
+  )
 
   server.tool(
     'trio_get_status',

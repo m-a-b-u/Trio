@@ -17,7 +17,8 @@ import Swinject
     }
 
     /// Checks if onboarding has been completed and updates the shouldShowOnboarding flag accordingly.
-    private func checkOnboardingStatus() {
+    /// Called again after a backup restore has rewritten the persisted flag at launch.
+    func checkOnboardingStatus() {
         shouldShowOnboarding = !(PropertyPersistentFlags.shared.onboardingCompleted ?? false)
     }
 

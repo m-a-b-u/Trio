@@ -366,9 +366,11 @@ test('MCP exposes chat instructions and tool hints, and reads/proposes/cancels w
     trio_list_proposals: readOnly, trio_get_proposal: readOnly,
     trio_cancel_proposal: { readOnlyHint: false, destructiveHint: true, idempotentHint: true, openWorldHint: false },
     trio_get_history_stats: readOnly, trio_get_daily_report: readOnly,
+    trio_get_history: readOnly, trio_get_data_quality: readOnly, trio_compare_periods: readOnly,
+    trio_get_meals: readOnly, trio_get_meal_photo: readOnly,
     trio_run_daily_analysis: { readOnlyHint: false, destructiveHint: true, idempotentHint: false, openWorldHint: true }
   }
-  assert.equal(tools.length, 11)
+  assert.equal(tools.length, 16)
   for (const tool of tools) assert.deepEqual(tool.annotations, expectedHints[tool.name], tool.name)
   assert.match(tools.find(tool => tool.name === 'trio_run_daily_analysis').description, /only when the user explicitly requests/)
   const call = async (name, args = {}) => {
@@ -380,6 +382,32 @@ test('MCP exposes chat instructions and tool hints, and reads/proposes/cancels w
   assert.deepEqual((await call('trio_get_settings', { section: 'settings' })).data, state().settings)
   assert.equal((await call('trio_get_history_stats')).readings, 8)
   assert.deepEqual(await call('trio_get_daily_report'), [])
+  const mealID = '0F1E2D3C-4B5A-4978-8695-A4B3C2D1E0F9'
+  const jpeg = Buffer.from([0xFF, 0xD8, 0xFF, 0xE0, 0x00, 0x10, 0xFF, 0xD9])
+  const meal = (revision, extra = {}) => ({
+    id: mealID, createdAt: '2026-10-25T12:00:00Z', provider: 'anthropic', model: 'synthetic-model', webSearch: true,
+    description: '300 g Spaghetti', revision,
+    estimate: { carbs: 90, fat: 12, protein: 20, confidence: 'medium', notes: 'Synthetic', shortNote: 'Pasta', items: [{ name: 'Spaghetti', grams: 300, carbs: 90 }] },
+    ...extra
+  })
+  assert.equal((await request('/trio/meals', { meals: [meal(1, { photo: jpeg.toString('base64') })] })).status, 200)
+  assert.equal((await request('/trio/meals', { meals: [meal(2, { applied: { carbs: 85, fat: 12, protein: 20, note: 'Pasta', at: '2026-10-25T12:01:00Z' } })] })).status, 200)
+  assert.equal((await request('/trio/meals', { meals: [meal(1)] })).status, 200)
+  assert.equal((await request('/trio/meals', { meals: [meal(3, { photo: Buffer.from('not a jpeg').toString('base64') })] })).status, 400)
+  const listed = await call('trio_get_meals', {})
+  assert.equal(listed.total, 1)
+  assert.equal(listed.nextOffset, null)
+  assert.equal(listed.meals[0].revision, 2)
+  assert.equal(listed.meals[0].applied.carbs, 85)
+  assert.equal(listed.meals[0].hasPhoto, true)
+  assert.equal(listed.meals[0].photo, undefined)
+  assert.equal((await call('trio_get_meals', { from: '2026-10-26T00:00:00Z' })).total, 0)
+  const photo = await client.callTool({ name: 'trio_get_meal_photo', arguments: { id: mealID.toLowerCase() } })
+  assert.equal(photo.isError, undefined)
+  assert.equal(photo.content[0].type, 'image')
+  assert.equal(photo.content[0].mimeType, 'image/jpeg')
+  assert.deepEqual(Buffer.from(photo.content[0].data, 'base64'), jpeg)
+  assert.equal((await client.callTool({ name: 'trio_get_meal_photo', arguments: { id: '../meals.json' } })).isError, true)
   const catalog = await client.callTool({ name: 'trio_get_settings_catalog', arguments: {} })
   assert.equal(catalog.isError, undefined)
   assert.ok(JSON.parse(catalog.content[0].text).catalog.some(row => row.target === 'relay_config'))
@@ -421,4 +449,65 @@ test('iPhone approval reservation excludes concurrent cancellation and duplicate
   const cancelled = (await request('/api/proposals', { target: 'preferences', patch: { maxIOB: 2.1 }, reason: 'Synthetic cancelled proposal' })).body
   assert.equal((await request(`/api/proposals/${cancelled.id}/cancel`, {})).status, 200)
   assert.equal((await request(`/trio/proposals/${cancelled.id}/claim`, {})).status, 409)
+})
+
+test('raw history: authenticated relay and stdio retrieve all 8640 exact readings, other series and coverage', async t => {
+  const { Client } = await import('@modelcontextprotocol/sdk/client/index.js')
+  const { StdioClientTransport } = await import('@modelcontextprotocol/sdk/client/stdio.js')
+  const { request, env } = await fixture(t, undefined, { configuration: { anthropicApiKey: '' } })
+  const start = Date.now() - 30 * 86400000 + 60000
+  const from = new Date(start).toISOString(), to = new Date(start + 30 * 86400000).toISOString()
+  const glucose = Array.from({ length: 8640 }, (_, i) => ({ t: new Date(start + i * 300000).toISOString(), v: 100 + i / 100000, d: 'Flat' }))
+  const boluses = [{ t: glucose[0].t, u: 0.123456789, smb: true, ext: false }]
+  assert.equal((await request('/trio/history', { glucose, boluses })).body.glucose, 8640)
+  assert.equal((await request('/api/history', undefined, false)).status, 401)
+  assert.equal((await request('/api/history/quality', undefined, false)).status, 401)
+  const periods = { a: { from, to }, b: { from, to } }
+  assert.equal((await request('/api/history/compare', periods, false)).status, 401)
+  for (const query of ['limit=1001', 'kind=unknown', 'from=2026-01-01', 'cursor=broken']) {
+    assert.equal((await request('/api/history?' + query)).status, 400)
+  }
+  const client = new Client({ name: 'synthetic-exact-charts', version: '1.0.0' })
+  await client.connect(new StdioClientTransport({ command: process.execPath, args: [script, 'mcp'], env }))
+  t.after(() => client.close())
+  const call = async (name, args) => {
+    const response = await client.callTool({ name, arguments: args })
+    assert.equal(response.isError, undefined, JSON.stringify(response))
+    return JSON.parse(response.content[0].text)
+  }
+  const all = []
+  let page = await call('trio_get_history', { kind: 'glucose', from, to, limit: 1000 })
+  const revision = page.revision
+  while (true) {
+    assert.equal(page.total, 8640)
+    assert.equal(page.offset, all.length)
+    assert.equal(page.revision, revision)
+    all.push(...page.data)
+    if (!page.nextCursor) break
+    page = await call('trio_get_history', { cursor: page.nextCursor, limit: 1000 })
+  }
+  assert.deepEqual(all, glucose)
+  assert.deepEqual((await call('trio_get_history', { kind: 'boluses', from, to })).data, boluses)
+  assert.equal((await call('trio_get_data_quality', { from, to })).glucoseCadence.occupiedSlots, 8640)
+  assert.equal((await call('trio_compare_periods', periods)).deltaBMinusA.mean, 0)
+  const initial = await call('trio_get_history', { from, to, limit: 1 })
+  await request('/trio/history', { glucose: [{ ...glucose[1], v: 199.123456 }] })
+  const changed = await client.callTool({ name: 'trio_get_history', arguments: { cursor: initial.nextCursor } })
+  assert.equal(changed.isError, true)
+  assert.match(changed.content[0].text, /History changed/)
+})
+
+test('unreadable history fails explicitly and is never replaced by a fresh upload', async t => {
+  const { dir, request } = await fixture(t)
+  const file = path.join(dir, 'history.json')
+  for (const invalid of ['broken-history', 'null', '[]', '{"glucose":{}}']) {
+    await fs.writeFile(file, invalid)
+    for (const route of ['/api/history', '/api/history/quality']) {
+      const result = await request(route)
+      assert.equal(result.status, 400)
+      assert.match(result.body.error, /Stored history could not be read/)
+    }
+    assert.equal((await request('/trio/history', { glucose: [{ t: new Date().toISOString(), v: 120 }] })).status, 400)
+    assert.equal(await fs.readFile(file, 'utf8'), invalid)
+  }
 })
